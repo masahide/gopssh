@@ -11,6 +11,7 @@ import (
 	"net"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"golang.org/x/crypto/ssh"
@@ -44,13 +45,11 @@ func run() int {
 		Timeout:         5 * time.Second,
 		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
 	}
-	inputCh := make(chan Input)
-	errCh := make(chan error)
 	cw := &ConWork{
 		Host:     flag.Arg(0),
 		Port:     *port,
-		Commands: inputCh,
-		Err:      errCh,
+		Commands: make(chan Input),
+		Err:      make(chan Result),
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -86,8 +85,10 @@ const (
 )
 
 type Result struct {
-	Type Type
-	Data string
+	ServerID  int
+	SessionID int
+	Type      Type
+	Data      string
 }
 type Input struct {
 	Command string
@@ -95,11 +96,21 @@ type Input struct {
 	Results chan Result
 }
 
+func (i Input) SessionErr(ctx context.Context, m string) {
+	select {
+	case <-ctx.Done():
+	case i.Results <- Result{Type: SessionErr, Data: m}:
+		close(i.Results)
+	}
+	return
+}
+
 type ConWork struct {
+	Id       int
 	Host     string
 	Port     string
 	Commands chan Input
-	Err      chan error
+	Err      chan Result
 }
 
 func (c *ConWork) conWorker(ctx context.Context, config *ssh.ClientConfig) {
@@ -125,47 +136,48 @@ func (c *ConWork) conWorker(ctx context.Context, config *ssh.ClientConfig) {
 func (c *ConWork) conSession(ctx context.Context, conn *ssh.Client, cmd Input) {
 	session, err := conn.NewSession()
 	if err != nil {
-		select {
-		case <-ctx.Done():
-			return
-		case cmd.Results <- Result{Type: SessionErr, Data: fmt.Sprintf("cannot open new session: %v", err)}:
-		}
-		close(cmd.Results)
+		cmd.SessionErr(ctx, fmt.Sprintf("cannot open new session: %v", err))
 		return
 	}
 	defer session.Close()
 	defer close(cmd.Results)
-	session.Stdout = readLineWorker(ctx, cmd.Results, StdOut)
-	session.Stderr = readLineWorker(ctx, cmd.Results, StdErr)
+	stdout, err := session.StdoutPipe()
+	if err != nil {
+		cmd.SessionErr(ctx, fmt.Sprintf("cannot open stdoutPipe: %v", err))
+		return
+	}
+	stderr, err := session.StderrPipe()
+	if err != nil {
+		cmd.SessionErr(ctx, fmt.Sprintf("cannot open stderrPipe: %v", err))
+		return
+	}
+	wg := &sync.WaitGroup{}
+	wg.Add(2)
+	readLineWorker(ctx, cmd.Results, stdout, StdOut, wg)
+	readLineWorker(ctx, cmd.Results, stderr, StdErr, wg)
 	session.Stdin = strings.NewReader(cmd.Stdin)
 	err = session.Run(cmd.Command)
 	if err != nil {
 		if ee, ok := err.(*ssh.ExitError); ok {
 			select {
 			case <-ctx.Done():
-				return
 			case cmd.Results <- Result{Type: SessionErr, Data: fmt.Sprintf("session Run: %v", ee)}:
 			}
 			return
 		}
-	}
-	log.Print("wait")
-	err = session.Wait()
-	log.Print("end wait")
-	if err != nil {
 		select {
 		case <-ctx.Done():
 			return
 		case cmd.Results <- Result{Type: SessionErr, Data: fmt.Sprintf("session Wait: %v", err)}:
 		}
 	}
+	wg.Wait()
 }
 
-func readLineWorker(ctx context.Context, out chan Result, t Type) io.Writer {
-	pr, w := io.Pipe()
+func readLineWorker(ctx context.Context, out chan Result, pr io.Reader, t Type, wg *sync.WaitGroup) {
 	r := bufio.NewReader(pr)
 	go func() {
-		defer w.Close()
+		defer wg.Done()
 		for {
 			line, err := r.ReadBytes('\n')
 			if err != nil && err != io.EOF {
@@ -185,7 +197,6 @@ func readLineWorker(ctx context.Context, out chan Result, t Type) io.Writer {
 			}
 		}
 	}()
-	return w
 }
 
 func main() {
