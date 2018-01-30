@@ -78,7 +78,7 @@ func run() int {
 type Type int
 
 const (
-	StdOut Type = iota
+	EOF Type = iota
 	StdErr
 	SessionErr
 	ReadErr
@@ -153,8 +153,8 @@ func (c *ConWork) conSession(ctx context.Context, conn *ssh.Client, cmd Input) {
 	}
 	wg := &sync.WaitGroup{}
 	wg.Add(2)
-	readLineWorker(ctx, cmd.Results, stdout, StdOut, wg)
-	readLineWorker(ctx, cmd.Results, stderr, StdErr, wg)
+	go readLineWorker(ctx, cmd.Results, bufio.NewReader(stdout), StdOut, wg)
+	go readLineWorker(ctx, cmd.Results, bufio.NewReader(stderr), StdErr, wg)
 	session.Stdin = strings.NewReader(cmd.Stdin)
 	err = session.Run(cmd.Command)
 	if err != nil {
@@ -174,29 +174,30 @@ func (c *ConWork) conSession(ctx context.Context, conn *ssh.Client, cmd Input) {
 	wg.Wait()
 }
 
-func readLineWorker(ctx context.Context, out chan Result, pr io.Reader, t Type, wg *sync.WaitGroup) {
-	r := bufio.NewReader(pr)
-	go func() {
-		defer wg.Done()
-		for {
-			line, err := r.ReadBytes('\n')
-			if err != nil && err != io.EOF {
-				select {
-				case <-ctx.Done():
-				case out <- Result{Type: ReadErr, Data: err.Error()}:
-				}
-				return
-			}
+func readLineWorker(ctx context.Context, out chan Result, r bufio.Reader, t Type, wg *sync.WaitGroup) {
+	defer wg.Done()
+	for {
+		line, err := r.ReadBytes('\n')
+		if err != nil && err != io.EOF {
 			select {
 			case <-ctx.Done():
-				return
-			case out <- Result{Type: t, Data: string(line)}:
+			case out <- Result{Type: ReadErr, Data: err.Error()}:
 			}
-			if err == io.EOF {
-				return
-			}
+			return
 		}
-	}()
+		select {
+		case <-ctx.Done():
+			return
+		case out <- Result{Type: t, Data: string(line)}:
+		}
+		if err == io.EOF {
+			select {
+			case <-ctx.Done():
+			case out <- Result{Type: EOF, Data: ""}:
+			}
+			return
+		}
+	}
 }
 
 func main() {
