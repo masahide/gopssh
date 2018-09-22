@@ -18,7 +18,7 @@ participant server as server
 group 接続のみ
 	user -> main : 接続先リスト
 
-	main -> user : pipeファイルを返す 
+	main -> user : pipeファイルを返す
 
 	main -> conWorker : 接続先の数だけ起動
 	activate conWorker

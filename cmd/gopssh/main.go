@@ -45,11 +45,11 @@ func run() int {
 		Timeout:         5 * time.Second,
 		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
 	}
-	cw := &ConWork{
-		Host:     flag.Arg(0),
-		Port:     *port,
-		Commands: make(chan Input),
-		Err:      make(chan Result),
+	cw := &conWork{
+		host:     flag.Arg(0),
+		port:     *port,
+		commands: make(chan input),
+		err:      make(chan result),
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -62,8 +62,8 @@ func run() int {
 			log.Fatal(err)
 		}
 	}
-	results := make(chan Result)
-	cw.Commands <- Input{
+	results := make(chan result)
+	cw.commands <- input{
 		Command: strings.Join(flag.Args()[1:], " "),
 		Stdin:   string(in),
 		Results: results,
@@ -75,51 +75,69 @@ func run() int {
 	return 0
 }
 
-type Type int
+type resType int
 
 const (
-	EOF Type = iota
-	StdErr
-	SessionErr
-	ReadErr
+	eof resType = iota
+	stdErr
+	stdOut
+	sessionErr
+	readErr
 )
 
-type Result struct {
-	ServerID  int
-	SessionID int
-	Type      Type
-	Data      string
+type result struct {
+	serverID  int
+	sessionID int
+	resType
+	data string
 }
-type Input struct {
+type input struct {
 	Command string
 	Stdin   string
-	Results chan Result
+	Results chan result
 }
 
-func (i Input) SessionErr(ctx context.Context, m string) {
+func (i input) sessionErr(ctx context.Context, m string) {
 	select {
 	case <-ctx.Done():
-	case i.Results <- Result{Type: SessionErr, Data: m}:
+	case i.Results <- result{resType: sessionErr, data: m}:
 		close(i.Results)
 	}
 	return
 }
 
-type ConWork struct {
-	Id       int
-	Host     string
-	Port     string
-	Commands chan Input
-	Err      chan Result
+var bufPool = sync.Pool{
+	New: func() interface{} {
+		// The Pool's New function should generally only return pointer
+		// types, since a pointer can be put into the return interface
+		// value without an allocation:
+		return new(bytes.Buffer)
+	},
 }
 
-func (c *ConWork) conWorker(ctx context.Context, config *ssh.ClientConfig) {
-	hostport := fmt.Sprintf("%s:%s", c.Host, c.Port)
+
+type sessionWork struct{
+	con *conWork
+	buf *bytes.Buffer
+}
+
+
+
+type conWork struct {
+	id       int
+	host     string
+	port     string
+	commands chan input
+	err      chan result
+}
+
+func (c *conWork) conWorker(ctx context.Context, config *ssh.ClientConfig) {
+	hostport := fmt.Sprintf("%s:%s", c.host, c.port)
 	conn, err := ssh.Dial("tcp", hostport, config)
 	if err != nil {
 		select {
 		case <-ctx.Done():
-		case c.Err <- fmt.Errorf("cannot connect %v: %v", hostport, err):
+		case c.err <- result{resType: sessionErr, data: fmt.Sprintf("cannot connect %v: %v", hostport, err)}:
 		}
 	}
 	defer conn.Close()
@@ -127,73 +145,72 @@ func (c *ConWork) conWorker(ctx context.Context, config *ssh.ClientConfig) {
 		select {
 		case <-ctx.Done():
 			return
-		case cmd := <-c.Commands:
+		case cmd := <-c.commands:
 			c.conSession(ctx, conn, cmd)
 		}
 	}
 }
 
-func (c *ConWork) conSession(ctx context.Context, conn *ssh.Client, cmd Input) {
+func (c *conWork) conSession(ctx context.Context, conn *ssh.Client, cmd input) {
 	session, err := conn.NewSession()
 	if err != nil {
-		cmd.SessionErr(ctx, fmt.Sprintf("cannot open new session: %v", err))
+		cmd.sessionErr(ctx, fmt.Sprintf("cannot open new session: %v", err))
 		return
 	}
 	defer session.Close()
 	defer close(cmd.Results)
 	stdout, err := session.StdoutPipe()
 	if err != nil {
-		cmd.SessionErr(ctx, fmt.Sprintf("cannot open stdoutPipe: %v", err))
+		cmd.sessionErr(ctx, fmt.Sprintf("cannot open stdoutPipe: %v", err))
 		return
 	}
 	stderr, err := session.StderrPipe()
 	if err != nil {
-		cmd.SessionErr(ctx, fmt.Sprintf("cannot open stderrPipe: %v", err))
+		cmd.sessionErr(ctx, fmt.Sprintf("cannot open stderrPipe: %v", err))
 		return
 	}
 	wg := &sync.WaitGroup{}
 	wg.Add(2)
-	go readLineWorker(ctx, cmd.Results, bufio.NewReader(stdout), StdOut, wg)
-	go readLineWorker(ctx, cmd.Results, bufio.NewReader(stderr), StdErr, wg)
+	go readLineWorker(ctx, cmd.Results, bufio.NewReader(stdout), stdOut, wg)
+	go readLineWorker(ctx, cmd.Results, bufio.NewReader(stderr), stdErr, wg)
 	session.Stdin = strings.NewReader(cmd.Stdin)
 	err = session.Run(cmd.Command)
 	if err != nil {
 		if ee, ok := err.(*ssh.ExitError); ok {
 			select {
 			case <-ctx.Done():
-			case cmd.Results <- Result{Type: SessionErr, Data: fmt.Sprintf("session Run: %v", ee)}:
+			case cmd.Results <- result{resType: sessionErr, data: fmt.Sprintf("session Run: %v", ee)}:
 			}
 			return
 		}
 		select {
 		case <-ctx.Done():
 			return
-		case cmd.Results <- Result{Type: SessionErr, Data: fmt.Sprintf("session Wait: %v", err)}:
+		case cmd.Results <- result{resType: sessionErr, data: fmt.Sprintf("session Wait: %v", err)}:
 		}
 	}
 	wg.Wait()
 }
 
-func readLineWorker(ctx context.Context, out chan Result, r bufio.Reader, t Type, wg *sync.WaitGroup) {
+func readLineWorker(ctx context.Context, out chan result, r *bufio.Reader, t resType, wg *sync.WaitGroup) {
 	defer wg.Done()
 	for {
 		line, err := r.ReadBytes('\n')
 		if err != nil && err != io.EOF {
 			select {
-			case <-ctx.Done():
-			case out <- Result{Type: ReadErr, Data: err.Error()}:
+			case <-ctx.Done(): case out <- result{resType: readErr, data: err.Error()}:
 			}
 			return
 		}
 		select {
 		case <-ctx.Done():
 			return
-		case out <- Result{Type: t, Data: string(line)}:
+		case out <- result{resType: t, data: string(line)}:
 		}
 		if err == io.EOF {
 			select {
 			case <-ctx.Done():
-			case out <- Result{Type: EOF, Data: ""}:
+			case out <- result{resType: eof, data: ""}:
 			}
 			return
 		}
