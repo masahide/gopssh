@@ -23,7 +23,13 @@ import (
 )
 
 var (
-	concurrency  = flag.Int("p", 0, "concurrency(0 is unlimit)")
+	// Version is version number
+	Version = "dev"
+	// Date is build date
+	Date = ""
+
+	showVer      = flag.Bool("version", false, "Show version")
+	concurrency  = flag.Int("p", 0, "concurrency (defalut \"0\" is unlimit)")
 	user         = flag.String("u", os.Getenv("USER"), "user")
 	hostsfile    = flag.String("h", "", "host file")
 	stdinFlag    = flag.Bool("i", false, "read stdin")
@@ -384,5 +390,9 @@ func readStream(ctx context.Context, out io.Writer, r io.Reader, errCh chan<- er
 }
 
 func main() {
+	if *showVer {
+		fmt.Printf("version: %s %s\n", Version, Date)
+		return
+	}
 	os.Exit(run())
 }
