@@ -1,0 +1,33 @@
+dist: trusty
+sudo: required
+language: go
+go: '1.10.3'
+services:
+  - docker
+addons:
+  apt:
+    packages:
+    - rpm
+    - snapd
+env:
+  - PATH=/snap/bin:$PATH
+install:
+  - make setup
+  - sudo snap install snapcraft --classic
+script:
+  - make ci
+after_success:
+  # - bash <(curl -s https://codecov.io/bash)
+  # - rm coverage.txt
+  - test -n "$TRAVIS_TAG" && docker login -u="$DOCKER_USERNAME" -p="$DOCKER_PASSWORD"
+
+deploy:
+- provider: script
+  skip_cleanup: true
+  script: curl -sL https://git.io/goreleaser | bash
+  on:
+    tags: true
+    condition: $TRAVIS_OS_NAME = linux
+notifications:
+  email: false
+
