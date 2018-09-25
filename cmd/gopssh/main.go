@@ -16,25 +16,49 @@ import (
 	"sync"
 	"time"
 
+	"github.com/cenkalti/backoff"
 	"github.com/fatih/color"
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/crypto/ssh/agent"
 )
 
 var (
+	concurrency  = flag.Int("p", 0, "concurrency(0 is unlimit)")
 	user         = flag.String("u", os.Getenv("USER"), "user")
 	hostsfile    = flag.String("h", "", "host file")
 	stdinFlag    = flag.Bool("i", false, "read stdin")
 	showHostNmae = flag.Bool("n", false, "show hostname")
 	colorMode    = flag.Bool("c", true, "colorized outputs")
-
+	debug        = flag.Bool("debug", false, "debug outputs")
+	timeout      = flag.Duration("timeout", 5*time.Second, "maximum amount of time for the TCP connection to establish.")
+	kexFlag      = flag.String("kex",
+		"diffie-hellman-group1-sha1,diffie-hellman-group14-sha1,ecdh-sha2-nistp256,ecdh-sha2-nistp384,ecdh-sha2-nistp521,curve25519-sha256@libssh.org",
+		"allowed key exchanges algorithms",
+	)
+	ciphersFlag = flag.String("ciphers",
+		"arcfour256,aes128-gcm@openssh.com,chacha20-poly1305@openssh.com,aes128-ctr,aes192-ctr,aes256-ctr",
+		"allowed cipher algorithms")
+	macsFlag = flag.String("macs",
+		"hmac-sha1-96,hmac-sha1,hmac-sha2-256,hmac-sha2-256-etm@openssh.com",
+		"allowed MAC algorithms")
+	// "ssh-rsa,ssh-dss,ecdsa-sha2-nistp256,ecdsa-sha2-nistp384,ecdsa-sha2-nistp521,ssh-ed25519"
 	stdoutPool = sync.Pool{New: func() interface{} { return new(bytes.Buffer) }}
 	stderrPool = sync.Pool{New: func() interface{} { return new(bytes.Buffer) }}
 
-	red     = color.New()
-	boldRed = color.New()
-	green   = color.New()
+	sshAuthSocket = os.Getenv("SSH_AUTH_SOCK")
+
+	red                  = color.New()
+	boldRed              = color.New()
+	green                = color.New()
+	kex                  []string
+	ciphers              []string
+	macs                 []string
+	concurrentGoroutines chan struct{}
 )
+
+func toSlice(s string) []string {
+	return strings.Split(s, ",")
+}
 
 func init() {
 	flag.Parse()
@@ -42,6 +66,10 @@ func init() {
 		flag.Usage()
 		os.Exit(2)
 	}
+	concurrentGoroutines = make(chan struct{}, *concurrency)
+	kex = toSlice(*kexFlag)
+	ciphers = toSlice(*ciphersFlag)
+	macs = toSlice(*macsFlag)
 	if *colorMode {
 		red = color.New(color.FgRed)
 		boldRed = color.New(color.FgRed).Add(color.Bold)
@@ -132,20 +160,12 @@ func run() int {
 	if err != nil {
 		log.Fatalf("read hosts file err: %s", err)
 	}
-	socket := os.Getenv("SSH_AUTH_SOCK")
-	authConn, err := net.Dial("unix", socket)
-	if err != nil {
-		log.Fatalf("net.Dial: %v", err)
-	}
-	agentClient := agent.NewClient(authConn)
-
-	config := &ssh.ClientConfig{
+	config := ssh.ClientConfig{
 		User: *user,
-		Auth: []ssh.AuthMethod{
-			ssh.PublicKeysCallback(agentClient.Signers),
-		},
-		Timeout:         5 * time.Second,
+		//Auth: []ssh.AuthMethod{ ssh.PublicKeysCallback(agentClient.Signers), },
+		Timeout:         *timeout,
 		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
+		Config:          ssh.Config{KeyExchanges: kex, Ciphers: ciphers, MACs: macs},
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -158,9 +178,16 @@ func run() int {
 			host:    host,
 			command: make(chan input, 1),
 		}
-		go cws[i].conWorker(ctx, config, conInstances)
-
 	}
+	go func() {
+		for i := range cws {
+			if *concurrency > 0 {
+				concurrentGoroutines <- struct{}{}
+			}
+			go cws[i].conWorker(ctx, config, sshAuthSocket, conInstances)
+		}
+	}()
+
 	go func() {
 		for con := range conInstances {
 			if con.err != nil {
@@ -190,25 +217,7 @@ func run() int {
 	for i := 0; i < len(hosts); i++ {
 		select {
 		case res := <-results:
-			if *showHostNmae {
-				host := cws[res.conID].host
-				var c *color.Color
-				if res.code != 0 || res.err != nil {
-					c = boldRed
-				} else {
-					c = green
-				}
-				c.Printf("%s  reslut code %d\n", host, res.code)
-			}
-			if res.err != nil {
-				red.Printf("result err: %s", res.err)
-			}
-			if res.stdout.Len() > 0 {
-				fmt.Print(res.stdout.String())
-			}
-			if res.stderr.Len() > 0 {
-				red.Print(res.stderr.String())
-			}
+			printResult(res, cws[res.conID].host)
 			delReslt(res)
 		case <-ctx.Done():
 		}
@@ -220,23 +229,65 @@ func run() int {
 
 }
 
-/*
-func {
-	paramCh := make(chan conInstance, 1)
-	in <- getInstances{1, paramCh}
-	for i := range paramCh {
+func printResult(res *result, host string) {
+	if *showHostNmae {
+		var c *color.Color
+		if res.code != 0 || res.err != nil {
+			c = boldRed
+		} else {
+			c = green
+		}
+		c.Printf("%s  reslut code %d\n", host, res.code)
+	}
+	if res.err != nil {
+		red.Printf("result err: %s", res.err)
+	}
+	if res.stdout.Len() > 0 {
+		res.stdout.WriteTo(os.Stdout)
+	}
+	if res.stderr.Len() > 0 {
+		red.Print(res.stderr.String())
 	}
 }
-*/
 
 type getInstances struct {
 	id  int
 	res chan<- conInstance
 }
 
-func (c *conWork) conWorker(ctx context.Context, config *ssh.ClientConfig, instanceCh chan<- conInstance) {
+// TemporaryError is network error
+type TemporaryError interface {
+	Temporary() bool
+}
+
+func (c *conWork) conWorker(ctx context.Context, config ssh.ClientConfig, socket string, instanceCh chan<- conInstance) {
+	if *concurrency > 0 {
+		defer func() { <-concurrentGoroutines }()
+	}
+	// https://stackoverflow.com/questions/30228482/golang-unix-socket-error-dial-resource-temporarily-unavailable
+	var authConn net.Conn
+	err := backoff.Retry(func() error {
+		var err error
+		authConn, err = net.Dial("unix", socket)
+		if err != nil {
+			if terr, ok := err.(TemporaryError); ok && terr.Temporary() {
+				return err
+			}
+		}
+		return nil
+	}, backoff.NewExponentialBackOff())
+	if err != nil {
+		log.Fatalf("net.Dial: %v", err)
+	}
+	defer authConn.Close()
+	agentClient := agent.NewClient(authConn)
+	config.Auth = []ssh.AuthMethod{ssh.PublicKeysCallback(agentClient.Signers)}
+
 	res := conInstance{conWork: c, err: nil}
-	conn, err := ssh.Dial("tcp", c.host, config)
+	if *debug {
+		log.Printf("start ssh.Dial : %s", c.host)
+	}
+	conn, err := ssh.Dial("tcp", c.host, &config)
 	if err != nil {
 		res.err = fmt.Errorf("cannot connect [%s] err:%s", c.host, err)
 		select {
@@ -245,6 +296,9 @@ func (c *conWork) conWorker(ctx context.Context, config *ssh.ClientConfig, insta
 		}
 		return
 	}
+	if *debug {
+		log.Printf("done ssh.Dial : %s", c.host)
+	}
 	defer conn.Close()
 	for {
 		select {
@@ -252,7 +306,8 @@ func (c *conWork) conWorker(ctx context.Context, config *ssh.ClientConfig, insta
 			return
 		case cmd := <-c.command:
 			s := sessionWork{id: cmd.id, input: &cmd, con: c}
-			go s.worker(ctx, conn)
+			s.worker(ctx, conn)
+			return
 		}
 	}
 }
