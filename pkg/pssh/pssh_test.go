@@ -1,10 +1,14 @@
 package pssh
 
 import (
+	"bytes"
+	"net"
+	"os"
 	"testing"
 
 	"github.com/fatih/color"
 	"github.com/pkg/errors"
+	"golang.org/x/crypto/ssh/agent"
 )
 
 type testWriter struct{ result []byte }
@@ -81,18 +85,31 @@ func TestInit(t *testing.T) {
 				t.Errorf("res type :%T, want %T", p.red, test.want)
 			}
 		}
+		if p.stdoutPool.Get().(*bytes.Buffer).Len() != 0 {
+			t.Errorf("len:%d,want:0", p.stdoutPool.Get().(*bytes.Buffer).Len())
+		}
+		if p.stderrPool.Get().(*bytes.Buffer).Len() != 0 {
+			t.Errorf("len:%d,want:0", p.stderrPool.Get().(*bytes.Buffer).Len())
+		}
 	}
 
 }
 
 func TestNewResult(t *testing.T) {
-	r := newResult(1, 2)
+	s := &sessionWork{
+		id: 2,
+		con: &conWork{
+			id: 1,
+		},
+	}
+	r := s.newResult()
 	if r.conID != 1 {
 		t.Errorf("conID:%d, want %d", r.conID, 1)
 	}
 	if r.sessionID != 2 {
 		t.Errorf("sessionID:%d, want %d", r.sessionID, 2)
 	}
+	delReslt(r)
 }
 
 func TestReadHosts(t *testing.T) {
@@ -116,4 +133,26 @@ func TestReadHosts(t *testing.T) {
 		}
 	}
 
+}
+func TestGetHostKeyCallback(t *testing.T) {
+	r, err := getHostKeyCallback(true)
+	if err != nil {
+		t.Error(err)
+	}
+	if r("", &net.IPAddr{}, &agent.Key{}) != nil {
+		t.Errorf("r:%v, want:nil", r)
+	}
+	os.Setenv("HOME", "./test")
+	r, err = getHostKeyCallback(false)
+	if err != nil {
+		t.Error(err)
+	}
+	if r == nil {
+		t.Error("r:nil, want:not nil")
+	}
+	os.Setenv("HOME", "/dev/null")
+	r, err = getHostKeyCallback(false)
+	if err == nil {
+		t.Error(err)
+	}
 }

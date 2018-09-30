@@ -45,6 +45,11 @@ test:
 	go test $(TEST_OPTIONS) -v -race -coverpkg=$(PKG) -covermode=atomic -coverprofile=coverage.txt $(PKG) -run $(TEST_PATTERN) -timeout=2m
 .PHONY: test
 
+cover: test
+	go tool cover -html=coverage.txt
+	rm coverage.txt
+.PHONY: cover
+
 
 # Run all the tests and code checks
 ci: build

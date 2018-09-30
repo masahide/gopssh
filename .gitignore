@@ -26,3 +26,4 @@ _testmain.go
 gopssh
 vendor
 coverage.txt
+cover.html

@@ -88,8 +88,8 @@ var (
 		"allowed MAC algorithms")
 	// "ssh-rsa,ssh-dss,ecdsa-sha2-nistp256,ecdsa-sha2-nistp384,ecdsa-sha2-nistp521,ssh-ed25519"
 
-	stdoutPool = sync.Pool{New: func() interface{} { return new(bytes.Buffer) }}
-	stderrPool = sync.Pool{New: func() interface{} { return new(bytes.Buffer) }}
+	stdoutPool = sync.Pool{New: newBytesBuf}
+	stderrPool = sync.Pool{New: newBytesBuf}
 
 	sshAuthSocket = os.Getenv("SSH_AUTH_SOCK")
 
@@ -98,6 +98,8 @@ var (
 	green                = color.New()
 	concurrentGoroutines chan struct{}
 )
+
+func newBytesBuf() interface{} { return new(bytes.Buffer) }
 
 func toSlice(s string) []string {
 	return strings.Split(s, ",")
@@ -114,8 +116,8 @@ func (p *Pssh) Init() {
 		p.boldRed = color.New(color.FgRed).Add(color.Bold)
 		p.green = color.New(color.FgGreen)
 	}
-	p.stdoutPool = sync.Pool{New: func() interface{} { return new(bytes.Buffer) }}
-	p.stderrPool = sync.Pool{New: func() interface{} { return new(bytes.Buffer) }}
+	p.stdoutPool = sync.Pool{New: newBytesBuf}
+	p.stderrPool = sync.Pool{New: newBytesBuf}
 }
 
 type input struct {
@@ -188,28 +190,34 @@ func readHosts(fileName string) ([]string, error) {
 	return res, nil
 }
 
-func getHostKeyCallback(insecure bool) ssh.HostKeyCallback {
+func getHostKeyCallback(insecure bool) (ssh.HostKeyCallback, error) {
 	if insecure {
-		return ssh.InsecureIgnoreHostKey()
+		return ssh.InsecureIgnoreHostKey(), nil
 	}
-	file := path.Join(os.Getenv("HOME"), ".ssh/.ssh/known_hosts")
+	file := path.Join(os.Getenv("HOME"), ".ssh/known_hosts")
 	cb, err := knownhosts.New(file)
 	if err != nil {
-		errors.Wrap(err, "knownhosts.New")
+		return nil, errors.Wrap(err, "knownhosts.New")
 	}
-	return cb
+	return cb, nil
 }
 
 func (p *Pssh) run() int {
 	hosts, err := readHosts(*hostsfile)
 	if err != nil {
-		log.Fatalf("read hosts file err: %s", err)
+		log.Printf("read hosts file err: %s", err)
+		return 1
+	}
+	hc, err := getHostKeyCallback(*ignoreHostKey)
+	if err != nil {
+		log.Printf("read hosts file err: %s", err)
+		return 1
 	}
 	config := ssh.ClientConfig{
 		User: *user,
 		//Auth: []ssh.AuthMethod{ ssh.PublicKeysCallback(agentClient.Signers), },
 		Timeout:         *timeout,
-		HostKeyCallback: getHostKeyCallback(*ignoreHostKey),
+		HostKeyCallback: hc,
 		Config:          ssh.Config{KeyExchanges: p.kex, Ciphers: p.ciphers, MACs: p.macs},
 	}
 	ctx, cancel := context.WithCancel(context.Background())
