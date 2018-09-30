@@ -3,7 +3,6 @@ package main
 import (
 	"bytes"
 	"context"
-	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -11,6 +10,7 @@ import (
 	"log"
 	"net"
 	"os"
+	"path"
 	"regexp"
 	"strings"
 	"sync"
@@ -18,8 +18,10 @@ import (
 
 	"github.com/cenkalti/backoff"
 	"github.com/fatih/color"
+	"github.com/pkg/errors"
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/crypto/ssh/agent"
+	"golang.org/x/crypto/ssh/knownhosts"
 )
 
 var (
@@ -28,16 +30,17 @@ var (
 	// Date is build date
 	Date = ""
 
-	showVer      = flag.Bool("version", false, "Show version")
-	concurrency  = flag.Int("p", 0, "concurrency (defalut \"0\" is unlimit)")
-	user         = flag.String("u", os.Getenv("USER"), "user")
-	hostsfile    = flag.String("h", "", "host file")
-	stdinFlag    = flag.Bool("i", false, "read stdin")
-	showHostNmae = flag.Bool("n", false, "show hostname")
-	colorMode    = flag.Bool("c", true, "colorized outputs")
-	debug        = flag.Bool("debug", false, "debug outputs")
-	timeout      = flag.Duration("timeout", 5*time.Second, "maximum amount of time for the TCP connection to establish.")
-	kexFlag      = flag.String("kex",
+	//stdinFlag             = flag.Bool("i", false, "read stdin")
+	showVer       = flag.Bool("version", false, "Show version")
+	concurrency   = flag.Int("p", 0, "concurrency (defalut \"0\" is unlimit)")
+	user          = flag.String("u", os.Getenv("USER"), "user")
+	hostsfile     = flag.String("h", "", "host file")
+	showHostNmae  = flag.Bool("d", false, "show hostname")
+	colorMode     = flag.Bool("c", false, "colorized outputs")
+	ignoreHostKey = flag.Bool("k", false, "Do not check the host key")
+	debug         = flag.Bool("debug", false, "debug outputs")
+	timeout       = flag.Duration("timeout", 5*time.Second, "maximum amount of time for the TCP connection to establish.")
+	kexFlag       = flag.String("kex",
 		"diffie-hellman-group1-sha1,diffie-hellman-group14-sha1,ecdh-sha2-nistp256,ecdh-sha2-nistp384,ecdh-sha2-nistp521,curve25519-sha256@libssh.org",
 		"allowed key exchanges algorithms",
 	)
@@ -161,6 +164,18 @@ func readHosts(fileName string) ([]string, error) {
 	return res, nil
 }
 
+func getHostKeyCallback(insecure bool) ssh.HostKeyCallback {
+	if insecure {
+		return ssh.InsecureIgnoreHostKey()
+	}
+	file := path.Join(os.Getenv("HOME"), ".ssh/.ssh/known_hosts")
+	cb, err := knownhosts.New(file)
+	if err != nil {
+		errors.Wrap(err, "knownhosts.New")
+	}
+	return cb
+}
+
 func run() int {
 	hosts, err := readHosts(*hostsfile)
 	if err != nil {
@@ -170,7 +185,7 @@ func run() int {
 		User: *user,
 		//Auth: []ssh.AuthMethod{ ssh.PublicKeysCallback(agentClient.Signers), },
 		Timeout:         *timeout,
-		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
+		HostKeyCallback: getHostKeyCallback(*ignoreHostKey),
 		Config:          ssh.Config{KeyExchanges: kex, Ciphers: ciphers, MACs: macs},
 	}
 	ctx, cancel := context.WithCancel(context.Background())
@@ -205,12 +220,12 @@ func run() int {
 	}()
 
 	stdin := []byte{}
-	if *stdinFlag {
-		stdin, err = ioutil.ReadAll(os.Stdin)
-		if err != nil {
-			log.Fatal(err)
-		}
+	//if *stdinFlag {
+	stdin, err = ioutil.ReadAll(os.Stdin)
+	if err != nil {
+		log.Fatal(err)
 	}
+	//}
 	results := make(chan *result, len(hosts))
 	in := input{
 		command: strings.Join(flag.Args(), " "),
@@ -220,7 +235,42 @@ func run() int {
 	for i := range cws {
 		cws[i].command <- in
 	}
-	for i := 0; i < len(hosts); i++ {
+	printResults(ctx, results, cws)
+	cancel()
+
+	return 0
+
+}
+
+/*
+func printSortResults(ctx context.Context, results chan *result, cws []*conWork) {
+	resSlise := make([]*result, len(cws))
+	cur := 0
+L1:
+	for i := 0; i < len(cws); i++ {
+		select {
+		case res := <-results:
+		L2:
+			for i = cur;i<=res.conID;i++ {
+				cws[i] == nil{
+					break L2
+				}
+			}
+			if res.conID == cur {
+				printResult(res, cws[res.conID].host)
+				delReslt(res)
+				cur++
+				continue L1
+			}
+			resSlise[res.conID] = res
+		case <-ctx.Done():
+		}
+	}
+}
+*/
+
+func printResults(ctx context.Context, results chan *result, cws []*conWork) {
+	for i := 0; i < len(cws); i++ {
 		select {
 		case res := <-results:
 			printResult(res, cws[res.conID].host)
@@ -228,11 +278,6 @@ func run() int {
 		case <-ctx.Done():
 		}
 	}
-
-	cancel()
-
-	return 0
-
 }
 
 func printResult(res *result, host string) {

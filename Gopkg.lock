@@ -34,8 +34,16 @@
   version = "v0.0.4"
 
 [[projects]]
+  digest = "1:40e195917a951a8bf867cd05de2a46aaf1806c50cf92eebf4c16f78cd196f747"
+  name = "github.com/pkg/errors"
+  packages = ["."]
+  pruneopts = "UT"
+  revision = "645ef00459ed84a119197bfb8d8205042c6df63d"
+  version = "v0.8.0"
+
+[[projects]]
   branch = "master"
-  digest = "1:031315b435d9763224a4e1793a57ff23bf087e5477659afec2eaa77263edf9a1"
+  digest = "1:9048a2e933a04ecb6b5be6eb22f836a49d13a0002d0ee6d9112c4552353f1648"
   name = "golang.org/x/crypto"
   packages = [
     "curve25519",
@@ -46,9 +54,10 @@
     "poly1305",
     "ssh",
     "ssh/agent",
+    "ssh/knownhosts",
   ]
   pruneopts = "UT"
-  revision = "0e37d006457bf46f9e6692014ba72ef82c33022c"
+  revision = "5295e8364332db77d75fce11f1d19c053919a9c9"
 
 [[projects]]
   branch = "master"
@@ -56,15 +65,15 @@
   name = "golang.org/x/net"
   packages = ["context"]
   pruneopts = "UT"
-  revision = "f04abc6bdfa7a0171a8a0c9fd2ada9391044d056"
+  revision = "4dfa2610cdf3b287375bbba5b8f2a14d3b01d8de"
 
 [[projects]]
   branch = "master"
-  digest = "1:94952e2a064741ba4fb43b58794268a6798461f533c0c884f3c771a281357ee4"
+  digest = "1:e2ced6fdf654069e8713c96012275fbd245381673d53e8c8ace640b28441a28b"
   name = "golang.org/x/sys"
   packages = ["unix"]
   pruneopts = "UT"
-  revision = "b09afc3d579e346c4a7e4705953acaf6f9e551bd"
+  revision = "e4b3c5e9061176387e7cea65e4dc5853801f3fb7"
 
 [solve-meta]
   analyzer-name = "dep"
@@ -72,8 +81,10 @@
   input-imports = [
     "github.com/cenkalti/backoff",
     "github.com/fatih/color",
+    "github.com/pkg/errors",
     "golang.org/x/crypto/ssh",
     "golang.org/x/crypto/ssh/agent",
+    "golang.org/x/crypto/ssh/knownhosts",
   ]
   solver-name = "gps-cdcl"
   solver-version = 1

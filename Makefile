@@ -3,6 +3,7 @@ BIN?=gopssh
 TEST_PATTERN?=.
 TEST_OPTIONS?=
 OS=$(shell uname -s)
+PKG?=./pkg/pssh
 
 export PATH := ./bin:$(PATH)
 
@@ -38,6 +39,11 @@ check:
 fmt:
 	find . -name '*.go' -not -wholename './vendor/*' | while read -r file; do gofmt -w -s "$$file"; goimports -w "$$file"; done
 .PHONY: fmt
+
+
+test:
+	go test $(TEST_OPTIONS) -v -race -coverpkg=$(PKG) -covermode=atomic -coverprofile=coverage.txt $(PKG) -run $(TEST_PATTERN) -timeout=2m
+.PHONY: test
 
 
 # Run all the tests and code checks
