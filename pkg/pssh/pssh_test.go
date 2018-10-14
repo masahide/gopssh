@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"net"
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/fatih/color"
@@ -11,6 +12,7 @@ import (
 	"golang.org/x/crypto/ssh/agent"
 )
 
+/*
 type testWriter struct{ result []byte }
 
 func newTestWriter() *testWriter { return &testWriter{[]byte{}} }
@@ -19,6 +21,7 @@ func (w *testWriter) Write(p []byte) (n int, err error) {
 	w.result = append(w.result, p...)
 	return len(w.result), nil
 }
+*/
 
 func sliceEq(a, b []string) bool {
 
@@ -40,6 +43,11 @@ func sliceEq(a, b []string) bool {
 	return true
 }
 
+// ToSlice comma separated to slice
+func ToSlice(s string) []string {
+	return strings.Split(s, ",")
+}
+
 func TestToSlice(t *testing.T) {
 	/*
 		tw := newTestWriter()
@@ -55,7 +63,7 @@ func TestToSlice(t *testing.T) {
 		{"hoge,fuga,uho", []string{"hoge", "fuga", "uho"}},
 	}
 	for _, test := range tests {
-		res := toSlice(test.s)
+		res := ToSlice(test.s)
 		if !sliceEq(res, test.want) {
 			t.Errorf("res %v,want %v", res, test.want)
 		}
@@ -67,7 +75,7 @@ func TestInit(t *testing.T) {
 		colorMode bool
 		want      prn
 	}{
-		{false, print{}},
+		{false, &print{}},
 		{true, color.New()},
 	}
 	for _, test := range tests {
@@ -75,8 +83,8 @@ func TestInit(t *testing.T) {
 			Config: &Config{ColorMode: test.colorMode},
 		}
 		p.Init()
-		if _, ok := test.want.(print); ok {
-			if _, ok := p.red.(print); !ok {
+		if _, ok := test.want.(*print); ok {
+			if _, ok := p.red.(*print); !ok {
 				t.Errorf("res type :%T, want %T", p.red, test.want)
 			}
 		}
@@ -93,23 +101,6 @@ func TestInit(t *testing.T) {
 		}
 	}
 
-}
-
-func TestNewResult(t *testing.T) {
-	s := &sessionWork{
-		id: 2,
-		con: &conWork{
-			id: 1,
-		},
-	}
-	r := s.newResult()
-	if r.conID != 1 {
-		t.Errorf("conID:%d, want %d", r.conID, 1)
-	}
-	if r.sessionID != 2 {
-		t.Errorf("sessionID:%d, want %d", r.sessionID, 2)
-	}
-	delReslt(r)
 }
 
 func TestReadHosts(t *testing.T) {
@@ -154,5 +145,24 @@ func TestGetHostKeyCallback(t *testing.T) {
 	r, err = getHostKeyCallback(false)
 	if err == nil {
 		t.Error(err)
+	}
+	if r != nil {
+		t.Error("r:not nil, want: nil")
+	}
+}
+func TestPrint(t *testing.T) {
+	b := []byte{}
+	buf := bytes.NewBuffer(b)
+	p := &print{
+		output: buf,
+	}
+	p.Print("hoge")
+	if buf.String() != "hoge" {
+		t.Errorf("buf:%s, want:hoge", buf.String())
+	}
+	buf.Reset()
+	p.Printf("fuga%s", "hoge")
+	if buf.String() != "fugahoge" {
+		t.Errorf("buf:%s, want:fugahoge", buf.String())
 	}
 }

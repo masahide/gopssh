@@ -16,11 +16,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/cenkalti/backoff"
 	"github.com/fatih/color"
 	"github.com/pkg/errors"
 	"golang.org/x/crypto/ssh"
-	"golang.org/x/crypto/ssh/agent"
 	"golang.org/x/crypto/ssh/knownhosts"
 )
 
@@ -29,24 +27,79 @@ type prn interface {
 	Printf(format string, a ...interface{}) (n int, err error)
 }
 
-type print struct{}
-
-func (p print) Print(a ...interface{}) (n int, err error) {
-	return fmt.Print(a)
+type print struct {
+	colorMode bool
+	output    io.Writer
+	red       prn
+	boldRed   prn
+	green     prn
 }
-func (p print) Printf(format string, a ...interface{}) (n int, err error) {
-	return fmt.Printf(format, a)
+
+func newPrint(output io.Writer, colorMode bool) *print {
+	p := &print{
+		output:    output,
+		colorMode: colorMode,
+	}
+	p.init()
+	return p
+}
+
+func (p *print) init() {
+	if p.colorMode {
+		p.red = color.New(color.FgRed)
+		p.boldRed = color.New(color.FgRed).Add(color.Bold)
+		p.green = color.New(color.FgGreen)
+		return
+	}
+	p.red = &print{}
+	p.boldRed = &print{}
+	p.green = &print{}
+}
+
+func (p *print) Print(a ...interface{}) (n int, err error) {
+	return fmt.Fprint(p.output, a...)
+}
+func (p *print) Printf(format string, a ...interface{}) (n int, err error) {
+	return fmt.Fprintf(p.output, format, a...)
+}
+
+type dialIface interface {
+	Dial(network, address string) (net.Conn, error)
+}
+type netDial struct{}
+
+func (n netDial) Dial(network, address string) (net.Conn, error) { return net.Dial(network, address) }
+
+type sshDialIface interface {
+	Dial(network, addr string, config *ssh.ClientConfig) (sshClientIface, error)
+}
+type sshDial struct{}
+
+func (n sshDial) Dial(network, addr string, config *ssh.ClientConfig) (sshClientIface, error) {
+	return ssh.Dial(network, addr, config)
+}
+
+type sshClientIface interface {
+	ssh.Conn
+	Dial(n, addr string) (net.Conn, error)
+	DialTCP(n string, laddr, raddr *net.TCPAddr) (net.Conn, error)
+	HandleChannelOpen(channelType string) <-chan ssh.NewChannel
+	Listen(n, addr string) (net.Listener, error)
+	ListenTCP(laddr *net.TCPAddr) (net.Listener, error)
+	ListenUnix(socketPath string) (net.Listener, error)
+	NewSession() (*ssh.Session, error)
 }
 
 // Pssh pssh struct
 type Pssh struct {
 	*Config
-	red                  prn
-	boldRed              prn
-	green                prn
+	*print
 	concurrentGoroutines chan struct{}
 	stdoutPool           sync.Pool
 	stderrPool           sync.Pool
+	//netDial              func(network, address string) (net.Conn, error)
+	netDialer dialIface
+	sshDialer sshDialIface
 }
 
 // Config pssh config
@@ -60,6 +113,7 @@ type Config struct {
 	Debug         bool
 	Timeout       time.Duration
 	KexFlag       string
+	SSHAuthSocket string
 
 	// ciphers
 	kex     []string
@@ -68,6 +122,7 @@ type Config struct {
 }
 
 var (
+/*
 	concurrency   = flag.Int("p", 0, "concurrency (defalut \"0\" is unlimit)")
 	user          = flag.String("u", os.Getenv("USER"), "user")
 	hostsfile     = flag.String("h", "", "host file")
@@ -88,8 +143,8 @@ var (
 		"allowed MAC algorithms")
 	// "ssh-rsa,ssh-dss,ecdsa-sha2-nistp256,ecdsa-sha2-nistp384,ecdsa-sha2-nistp521,ssh-ed25519"
 
-	stdoutPool = sync.Pool{New: newBytesBuf}
-	stderrPool = sync.Pool{New: newBytesBuf}
+	//stdoutPool = sync.Pool{New: newBytesBuf}
+	//stderrPool = sync.Pool{New: newBytesBuf}
 
 	sshAuthSocket = os.Getenv("SSH_AUTH_SOCK")
 
@@ -97,27 +152,19 @@ var (
 	boldRed              = color.New()
 	green                = color.New()
 	concurrentGoroutines chan struct{}
+*/
 )
 
 func newBytesBuf() interface{} { return new(bytes.Buffer) }
 
-func toSlice(s string) []string {
-	return strings.Split(s, ",")
-}
-
 // Init Pssh
 func (p *Pssh) Init() {
 	p.concurrentGoroutines = make(chan struct{}, p.Concurrency)
-	p.red = print{}
-	p.boldRed = print{}
-	p.green = print{}
-	if p.ColorMode {
-		p.red = color.New(color.FgRed)
-		p.boldRed = color.New(color.FgRed).Add(color.Bold)
-		p.green = color.New(color.FgGreen)
-	}
+	p.print = newPrint(os.Stdout, p.ColorMode)
 	p.stdoutPool = sync.Pool{New: newBytesBuf}
 	p.stderrPool = sync.Pool{New: newBytesBuf}
+	p.netDialer = netDial{}
+	p.sshDialer = sshDial{}
 }
 
 type input struct {
@@ -135,45 +182,31 @@ type result struct {
 	stderr    *bytes.Buffer
 }
 
-type sessionWork struct {
-	id int
-	*input
-	con *conWork
-}
-type conWork struct {
-	id      int
-	host    string
-	command chan input
-}
-
 type conInstance struct {
 	*conWork
 	err error
 }
 
-func newResult(conID, sessionID int) *result {
+func (p *Pssh) newResult(conID, sessionID int) *result {
 	r := &result{
 		conID:     conID,
 		sessionID: sessionID,
-		stdout:    stdoutPool.Get().(*bytes.Buffer),
-		stderr:    stderrPool.Get().(*bytes.Buffer),
+		stdout:    p.stdoutPool.Get().(*bytes.Buffer),
+		stderr:    p.stderrPool.Get().(*bytes.Buffer),
 	}
 	r.stdout.Reset()
 	r.stderr.Reset()
 	return r
 }
-func delReslt(r *result) {
-	stdoutPool.Put(r.stdout)
-	stderrPool.Put(r.stderr)
-}
-
-func (s *sessionWork) newResult() *result {
-	return newResult(s.con.id, s.id)
+func (p *Pssh) delReslt(r *result) {
+	p.stdoutPool.Put(r.stdout)
+	p.stderrPool.Put(r.stderr)
 }
 
 var re = regexp.MustCompile(":.+")
 
 func readHosts(fileName string) ([]string, error) {
+	// nolint: gosec
 	data, err := ioutil.ReadFile(fileName)
 	if err != nil {
 		return nil, err
@@ -192,6 +225,7 @@ func readHosts(fileName string) ([]string, error) {
 
 func getHostKeyCallback(insecure bool) (ssh.HostKeyCallback, error) {
 	if insecure {
+		// nolint: gosec
 		return ssh.InsecureIgnoreHostKey(), nil
 	}
 	file := path.Join(os.Getenv("HOME"), ".ssh/known_hosts")
@@ -202,23 +236,32 @@ func getHostKeyCallback(insecure bool) (ssh.HostKeyCallback, error) {
 	return cb, nil
 }
 
-func (p *Pssh) run() int {
-	hosts, err := readHosts(*hostsfile)
+func (p *Pssh) newConWork(id int, host string) *conWork {
+	c := &conWork{Pssh: p, id: id, host: host, command: make(chan input, 1)}
+	c.startSession = c.startSessionWorker
+	return c
+}
+
+// Run main task
+func (p *Pssh) Run() int {
+	hosts, err := readHosts(p.Hostsfile)
 	if err != nil {
+		// nolint: errcheck,gosec
 		log.Printf("read hosts file err: %s", err)
 		return 1
 	}
-	hc, err := getHostKeyCallback(*ignoreHostKey)
+	hc, err := getHostKeyCallback(p.IgnoreHostKey)
 	if err != nil {
+		// nolint: errcheck,gosec
 		log.Printf("read hosts file err: %s", err)
 		return 1
 	}
 	config := ssh.ClientConfig{
-		User: *user,
+		User: p.User,
 		//Auth: []ssh.AuthMethod{ ssh.PublicKeysCallback(agentClient.Signers), },
-		Timeout:         *timeout,
+		Timeout:         p.Timeout,
 		HostKeyCallback: hc,
-		Config:          ssh.Config{KeyExchanges: p.kex, Ciphers: p.ciphers, MACs: p.macs},
+		Config:          ssh.Config{KeyExchanges: p.Config.kex, Ciphers: p.Config.ciphers, MACs: p.Config.macs},
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -226,24 +269,21 @@ func (p *Pssh) run() int {
 	conInstances := make(chan conInstance, len(hosts))
 	cws := make([]*conWork, len(hosts))
 	for i, host := range hosts {
-		cws[i] = &conWork{
-			id:      i,
-			host:    host,
-			command: make(chan input, 1),
-		}
+		cws[i] = p.newConWork(i, host)
 	}
 	go func() {
 		for i := range cws {
-			if *concurrency > 0 {
-				concurrentGoroutines <- struct{}{}
+			if p.Concurrency > 0 {
+				p.concurrentGoroutines <- struct{}{}
 			}
-			go cws[i].conWorker(ctx, config, sshAuthSocket, conInstances)
+			go cws[i].conWorker(ctx, config, p.SSHAuthSocket, conInstances)
 		}
 	}()
 
 	go func() {
 		for con := range conInstances {
 			if con.err != nil {
+				// nolint: errcheck,gosec
 				log.Printf("host:%s err:%s", con.host, con.err)
 				cancel()
 				break
@@ -251,9 +291,8 @@ func (p *Pssh) run() int {
 		}
 	}()
 
-	stdin := []byte{}
 	//if *stdinFlag {
-	stdin, err = ioutil.ReadAll(os.Stdin)
+	stdin, err := ioutil.ReadAll(os.Stdin)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -267,7 +306,7 @@ func (p *Pssh) run() int {
 	for i := range cws {
 		cws[i].command <- in
 	}
-	printResults(ctx, results, cws)
+	p.printResults(ctx, results, cws)
 	cancel()
 
 	return 0
@@ -301,161 +340,65 @@ L1:
 }
 */
 
-func printResults(ctx context.Context, results chan *result, cws []*conWork) {
+func (p *Pssh) printResults(ctx context.Context, results chan *result, cws []*conWork) {
 	for i := 0; i < len(cws); i++ {
 		select {
 		case res := <-results:
-			printResult(res, cws[res.conID].host)
-			delReslt(res)
+			p.printResult(res, cws[res.conID].host)
+			p.delReslt(res)
 		case <-ctx.Done():
 		}
 	}
 }
 
-func printResult(res *result, host string) {
-	if *showHostNmae {
-		var c *color.Color
+func (p *Pssh) printResult(res *result, host string) {
+	if p.ShowHostNmae {
+		var c prn
 		if res.code != 0 || res.err != nil {
-			c = boldRed
+			c = p.boldRed
 		} else {
-			c = green
+			c = p.green
 		}
+		// nolint: errcheck,gosec
 		c.Printf("%s  reslut code %d\n", host, res.code)
 	}
 	if res.err != nil {
-		red.Printf("result err: %s", res.err)
+		// nolint: errcheck,gosec
+		p.red.Printf("result err: %s", res.err)
 	}
 	if res.stdout.Len() > 0 {
+		// nolint: errcheck,gosec
 		res.stdout.WriteTo(os.Stdout)
 	}
 	if res.stderr.Len() > 0 {
-		red.Print(res.stderr.String())
+		// nolint: errcheck,gosec
+		p.red.Print(res.stderr.String())
 	}
 }
 
-type getInstances struct {
-	id  int
-	res chan<- conInstance
+type client interface {
+	NewSession() (*ssh.Session, error)
 }
 
-// TemporaryError is network error
-type TemporaryError interface {
-	Temporary() bool
-}
-
-func (c *conWork) conWorker(ctx context.Context, config ssh.ClientConfig, socket string, instanceCh chan<- conInstance) {
-	if *concurrency > 0 {
-		defer func() { <-concurrentGoroutines }()
-	}
-	// https://stackoverflow.com/questions/30228482/golang-unix-socket-error-dial-resource-temporarily-unavailable
-	var authConn net.Conn
-	err := backoff.Retry(func() error {
-		var err error
-		authConn, err = net.Dial("unix", socket)
-		if err != nil {
-			if terr, ok := err.(TemporaryError); ok && terr.Temporary() {
-				return err
-			}
-		}
-		return nil
-	}, backoff.NewExponentialBackOff())
-	if err != nil {
-		log.Fatalf("net.Dial: %v", err)
-	}
-	defer authConn.Close()
-	agentClient := agent.NewClient(authConn)
-	config.Auth = []ssh.AuthMethod{ssh.PublicKeysCallback(agentClient.Signers)}
-
-	res := conInstance{conWork: c, err: nil}
-	if *debug {
-		log.Printf("start ssh.Dial : %s", c.host)
-	}
-	conn, err := ssh.Dial("tcp", c.host, &config)
-	if err != nil {
-		res.err = fmt.Errorf("cannot connect [%s] err:%s", c.host, err)
-		select {
-		case <-ctx.Done():
-		case instanceCh <- res:
-		}
-		return
-	}
-	if *debug {
-		log.Printf("done ssh.Dial : %s", c.host)
-	}
-	defer conn.Close()
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case cmd := <-c.command:
-			s := sessionWork{id: cmd.id, input: &cmd, con: c}
-			s.worker(ctx, conn)
-			return
-		}
-	}
-}
-
-func (s *sessionWork) worker(ctx context.Context, conn *ssh.Client) {
-	res := s.newResult()
-	session, err := conn.NewSession()
-	if err != nil {
-		res.err = fmt.Errorf("cannot open new session: %v", err)
-		s.errResult(ctx, res)
-		return
-	}
-	defer session.Close()
-	stdout, err := session.StdoutPipe()
-	if err != nil {
-		res.err = fmt.Errorf("cannot open stdoutPipe: %v", err)
-		s.errResult(ctx, res)
-		return
-	}
-	stderr, err := session.StderrPipe()
-	if err != nil {
-		res.err = fmt.Errorf("cannot open stderrPipe: %v", err)
-		s.errResult(ctx, res)
-		return
-	}
-
-	errCh := make(chan error)
-	go readStream(ctx, res.stdout, stdout, errCh)
-	go readStream(ctx, res.stderr, stderr, errCh)
-	session.Stdin = strings.NewReader(s.stdin)
-	err = session.Run(s.command)
-	if err != nil {
-		if ee, ok := err.(*ssh.ExitError); ok {
-			res.err = errors.New(ee.Msg())
-			res.code = ee.ExitStatus()
-			s.errResult(ctx, res)
-			return
-		}
-		res.err = fmt.Errorf("session Wait: %v", err)
-	}
+func getErrs(ctx context.Context, errCh <-chan error) []error {
 	errs := make([]error, 2)
 	for i := 0; i < 2; i++ {
 		errs[i] = nil
 		select {
 		case errs[i] = <-errCh:
 		case <-ctx.Done():
-			return
+			return errs
 		}
 	}
+	return errs
+}
+func getFristErr(errs []error) error {
 	for _, err := range errs {
 		if err != nil {
-			res.err = err
-			break
+			return err
 		}
 	}
-	s.errResult(ctx, res)
-	return
-
-}
-func (s *sessionWork) errResult(ctx context.Context, res *result) {
-	select {
-	case <-ctx.Done():
-	case s.results <- res:
-	}
-	return
+	return nil
 }
 
 func readStream(ctx context.Context, out io.Writer, r io.Reader, errCh chan<- error) {

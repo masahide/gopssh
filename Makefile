@@ -50,6 +50,10 @@ cover: test
 	rm coverage.txt
 .PHONY: cover
 
+# Run all the linters
+lint:
+	gometalinter --deadline 3m --vendor ./...
+.PHONY: lint
 
 # Run all the tests and code checks
 ci: build
