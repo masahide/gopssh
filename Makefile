@@ -58,7 +58,7 @@ lint:
 .PHONY: lint
 
 # Run all the tests and code checks
-ci: build
+ci: build test lint
 .PHONY: ci
 
 # Build a beta version of $(BIN)
