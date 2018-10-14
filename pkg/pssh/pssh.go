@@ -35,6 +35,11 @@ type print struct {
 	green     prn
 }
 
+// ToSlice comma separated to slice
+func ToSlice(s string) []string {
+	return strings.Split(s, ",")
+}
+
 func newPrint(output io.Writer, colorMode bool) *print {
 	p := &print{
 		output:    output,
@@ -107,7 +112,7 @@ type Config struct {
 	Concurrency   int
 	User          string
 	Hostsfile     string
-	ShowHostNmae  bool
+	ShowHostName  bool
 	ColorMode     bool
 	IgnoreHostKey bool
 	Debug         bool
@@ -116,9 +121,9 @@ type Config struct {
 	SSHAuthSocket string
 
 	// ciphers
-	kex     []string
-	ciphers []string
-	macs    []string
+	Kex     []string
+	Ciphers []string
+	Macs    []string
 }
 
 var (
@@ -126,7 +131,7 @@ var (
 	concurrency   = flag.Int("p", 0, "concurrency (defalut \"0\" is unlimit)")
 	user          = flag.String("u", os.Getenv("USER"), "user")
 	hostsfile     = flag.String("h", "", "host file")
-	showHostNmae  = flag.Bool("d", false, "show hostname")
+	ShowHostName  = flag.Bool("d", false, "show hostname")
 	colorMode     = flag.Bool("c", false, "colorized outputs")
 	ignoreHostKey = flag.Bool("k", false, "Do not check the host key")
 	debug         = flag.Bool("debug", false, "debug outputs")
@@ -261,7 +266,7 @@ func (p *Pssh) Run() int {
 		//Auth: []ssh.AuthMethod{ ssh.PublicKeysCallback(agentClient.Signers), },
 		Timeout:         p.Timeout,
 		HostKeyCallback: hc,
-		Config:          ssh.Config{KeyExchanges: p.Config.kex, Ciphers: p.Config.ciphers, MACs: p.Config.macs},
+		Config:          ssh.Config{KeyExchanges: p.Config.Kex, Ciphers: p.Config.Ciphers, MACs: p.Config.Macs},
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -352,7 +357,7 @@ func (p *Pssh) printResults(ctx context.Context, results chan *result, cws []*co
 }
 
 func (p *Pssh) printResult(res *result, host string) {
-	if p.ShowHostNmae {
+	if p.ShowHostName {
 		var c prn
 		if res.code != 0 || res.err != nil {
 			c = p.boldRed

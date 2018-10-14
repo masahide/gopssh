@@ -68,12 +68,17 @@ func TestConWorker(t *testing.T) {
 	p.Init()
 	p.netDialer = mockNetDial{}
 	p.sshDialer = mockSSHDial{}
-	c := &conWork{Pssh: p, id: 1, host: "host1", command: make(chan input, 1)}
+	c := &conWork{
+		Pssh:         p,
+		id:           1,
+		host:         "host1",
+		command:      make(chan input, 1),
+		startSession: mockStartSessionWorker,
+	}
 	conInstances := make(chan conInstance, 1)
 	go c.conWorker(ctx, ssh.ClientConfig{}, "", conInstances)
 	results := make(chan *result, 1)
 	c.command <- input{command: "", stdin: "", results: results}
-	c.startSession = mockStartSessionWorker
 	res := <-results
 	if res.err != nil {
 		t.Error(res)

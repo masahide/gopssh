@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"net"
 	"os"
-	"strings"
 	"testing"
 
 	"github.com/fatih/color"
@@ -41,11 +40,6 @@ func sliceEq(a, b []string) bool {
 	}
 
 	return true
-}
-
-// ToSlice comma separated to slice
-func ToSlice(s string) []string {
-	return strings.Split(s, ",")
 }
 
 func TestToSlice(t *testing.T) {

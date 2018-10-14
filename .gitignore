@@ -26,4 +26,5 @@ _testmain.go
 gopssh
 vendor
 coverage.txt
+*coverage.txt
 cover.html
