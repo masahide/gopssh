@@ -1,5 +1,7 @@
 # gopssh
+[![Go Report Card](https://goreportcard.com/badge/github.com/masahide/gopssh)](https://goreportcard.com/report/github.com/masahide/gopssh)
 [![Build Status](https://travis-ci.org/masahide/gopssh.svg?branch=master)](https://travis-ci.org/masahide/gopssh)
+[![codecov](https://codecov.io/gh/masahide/gopssh/branch/master/graph/badge.svg)](https://codecov.io/gh/masahide/gopssh)
 [![goreleaser](https://img.shields.io/badge/powered%20by-goreleaser-green.svg?style=flat-square)](https://github.com/goreleaser)
 
 parallel ssh ssh client
