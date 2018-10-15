@@ -3,6 +3,7 @@ package main
 import (
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"time"
 
@@ -51,15 +52,24 @@ func newConfig() *pssh.Config {
 	return &c
 }
 
-func main() {
-	p := &pssh.Pssh{Config: newConfig()}
+func checkFlag(w io.Writer) (ret int, exit bool) {
+	flag.CommandLine.SetOutput(w)
+	if *showVer {
+		// nolint: errcheck
+		fmt.Fprintf(w, "version: %s %s\n", Version, Date)
+		return 0, true
+	}
 	if flag.NArg() == 0 {
 		flag.Usage()
-		os.Exit(2)
+		return 2, true
 	}
-	if *showVer {
-		fmt.Printf("version: %s %s\n", Version, Date)
-		os.Exit(0)
+	return 0, false
+}
+
+func main() {
+	p := &pssh.Pssh{Config: newConfig()}
+	if ret, exit := checkFlag(os.Stdout); exit {
+		os.Exit(ret)
 	}
 	p.Init()
 	os.Exit(p.Run())
