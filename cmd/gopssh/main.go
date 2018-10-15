@@ -55,6 +55,7 @@ func newConfig() *pssh.Config {
 func checkFlag(w io.Writer) (ret int, exit bool) {
 	flag.CommandLine.SetOutput(w)
 	if *showVer {
+		// nolint: errcheck
 		fmt.Fprintf(w, "version: %s %s\n", Version, Date)
 		return 0, true
 	}
