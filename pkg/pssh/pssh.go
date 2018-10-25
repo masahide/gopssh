@@ -116,6 +116,7 @@ type Config struct {
 	ColorMode     bool
 	IgnoreHostKey bool
 	Debug         bool
+	StdinFlag     bool
 	Timeout       time.Duration
 	KexFlag       string
 	SSHAuthSocket string
@@ -296,12 +297,12 @@ func (p *Pssh) Run() int {
 		}
 	}()
 
-	//if *stdinFlag {
-	stdin, err := ioutil.ReadAll(os.Stdin)
-	if err != nil {
-		log.Fatal(err)
+	stdin := []byte{}
+	if p.StdinFlag {
+		if stdin, err = ioutil.ReadAll(os.Stdin); err != nil {
+			log.Fatal(err)
+		}
 	}
-	//}
 	results := make(chan *result, len(hosts))
 	in := input{
 		command: strings.Join(flag.Args(), " "),

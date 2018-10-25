@@ -62,11 +62,11 @@ ci: build test lint
 .PHONY: ci
 
 # Build a beta version of $(BIN)
-build: $(BIN)
+build: clean $(BIN)
 .PHONY: build
 
 clean:
-	rm $(BIN)
+	rm -f $(BIN)
 .PHONY: clean
 
 $(BIN):
