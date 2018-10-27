@@ -47,13 +47,13 @@ example:
 For RHEL/CentOS:
 
 ```bash
-sudo yum install https://github.com/masahide/gopssh/releases/download/v0.1.0/gopssh_amd64.rpm
+sudo yum install https://github.com/masahide/gopssh/releases/download/v0.2.0/gopssh_amd64.rpm
 ```
 
 For Ubuntu/Debian:
 
 ```bash
-wget -qO /tmp/assumer_amd64.deb https://github.com/masahide/gopssh/releases/download/v0.1.0/gopssh_amd64.deb
+wget -qO /tmp/gopssh_amd64.deb https://github.com/masahide/gopssh/releases/download/v0.2.0/gopssh_amd64.deb
 sudo dpkg -i /tmp/gopssh_amd64.deb
 ```
 
@@ -63,7 +63,7 @@ sudo dpkg -i /tmp/gopssh_amd64.deb
 install via [brew](https://brew.sh):
 
 ```bash
-brew tap masahide/assumer https://github.com/masahide/gopssh
+brew tap masahide/gopssh https://github.com/masahide/gopssh
 brew install gopssh
 ```
 
