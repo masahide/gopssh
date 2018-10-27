@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/masahide/gopssh/pkg/pssh"
+	"golang.org/x/crypto/ssh/terminal"
 )
 
 var (
@@ -33,7 +34,6 @@ func newConfig() *pssh.Config {
 		Timeout:       5 * time.Second,
 		SSHAuthSocket: os.Getenv("SSH_AUTH_SOCK"),
 	}
-	//stdinFlag             = flag.Bool("i", false, "read stdin")
 	flag.IntVar(&c.Concurrency, "p", c.Concurrency, "concurrency (defalut \"0\" is unlimit)")
 	flag.StringVar(&c.User, "u", c.User, "username")
 	flag.StringVar(&c.Hostsfile, "h", c.Hostsfile, "host file")
@@ -49,6 +49,9 @@ func newConfig() *pssh.Config {
 	c.Kex = pssh.ToSlice(kexFlag)
 	c.Ciphers = pssh.ToSlice(ciphersFlag)
 	c.Macs = pssh.ToSlice(macsFlag)
+
+	// see: https://qiita.com/tanksuzuki/items/e712717675faf4efb07a#パイプで渡された時だけ処理する
+	c.StdinFlag = !terminal.IsTerminal(0)
 	return &c
 }
 
@@ -61,6 +64,8 @@ func checkFlag(w io.Writer) (ret int, exit bool) {
 	}
 	if flag.NArg() == 0 {
 		flag.Usage()
+		// nolint: errcheck
+		fmt.Fprintf(w, "example:\n$ ./gopssh -h <(echo host1 host2) ls -la /etc/\n")
 		return 2, true
 	}
 	return 0, false

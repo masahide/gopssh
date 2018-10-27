@@ -4,7 +4,7 @@
 [![codecov](https://codecov.io/gh/masahide/gopssh/branch/master/graph/badge.svg)](https://codecov.io/gh/masahide/gopssh)
 [![goreleaser](https://img.shields.io/badge/powered%20by-goreleaser-green.svg?style=flat-square)](https://github.com/goreleaser)
 
-parallel ssh ssh client
+parallel ssh client
 
 
 # Usage

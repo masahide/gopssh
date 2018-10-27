@@ -103,8 +103,11 @@ type Pssh struct {
 	stdoutPool           sync.Pool
 	stderrPool           sync.Pool
 	//netDial              func(network, address string) (net.Conn, error)
-	netDialer dialIface
-	sshDialer sshDialIface
+	netDialer    dialIface
+	sshDialer    sshDialIface
+	conInstances chan conInstance
+	cws          []*conWork
+	clientConf   ssh.ClientConfig
 }
 
 // Config pssh config
@@ -116,6 +119,7 @@ type Config struct {
 	ColorMode     bool
 	IgnoreHostKey bool
 	Debug         bool
+	StdinFlag     bool
 	Timeout       time.Duration
 	KexFlag       string
 	SSHAuthSocket string
@@ -261,7 +265,7 @@ func (p *Pssh) Run() int {
 		log.Printf("read hosts file err: %s", err)
 		return 1
 	}
-	config := ssh.ClientConfig{
+	p.clientConf = ssh.ClientConfig{
 		User: p.User,
 		//Auth: []ssh.AuthMethod{ ssh.PublicKeysCallback(agentClient.Signers), },
 		Timeout:         p.Timeout,
@@ -271,51 +275,60 @@ func (p *Pssh) Run() int {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	conInstances := make(chan conInstance, len(hosts))
-	cws := make([]*conWork, len(hosts))
+	p.conInstances = make(chan conInstance, len(hosts))
+	p.cws = make([]*conWork, len(hosts))
 	for i, host := range hosts {
-		cws[i] = p.newConWork(i, host)
+		p.cws[i] = p.newConWork(i, host)
 	}
+	go p.runConWorkers(ctx)
 	go func() {
-		for i := range cws {
-			if p.Concurrency > 0 {
-				p.concurrentGoroutines <- struct{}{}
-			}
-			go cws[i].conWorker(ctx, config, p.SSHAuthSocket, conInstances)
+		// nolint: vetshadow
+		if err := p.getConInstanceErrs(); err != nil {
+			log.Print(err)
+			cancel()
 		}
 	}()
 
-	go func() {
-		for con := range conInstances {
-			if con.err != nil {
-				// nolint: errcheck,gosec
-				log.Printf("host:%s err:%s", con.host, con.err)
-				cancel()
-				break
-			}
+	stdin := []byte{}
+	if p.StdinFlag {
+		if stdin, err = ioutil.ReadAll(os.Stdin); err != nil {
+			log.Fatal(err)
 		}
-	}()
-
-	//if *stdinFlag {
-	stdin, err := ioutil.ReadAll(os.Stdin)
-	if err != nil {
-		log.Fatal(err)
 	}
-	//}
 	results := make(chan *result, len(hosts))
 	in := input{
 		command: strings.Join(flag.Args(), " "),
 		stdin:   string(stdin),
 		results: results,
 	}
-	for i := range cws {
-		cws[i].command <- in
+	for i := range p.cws {
+		p.cws[i].command <- in
 	}
-	p.printResults(ctx, results, cws)
+	p.printResults(ctx, results, p.cws)
 	cancel()
 
 	return 0
 
+}
+
+func (p *Pssh) runConWorkers(ctx context.Context) int {
+	for i := range p.cws {
+		if p.Concurrency > 0 {
+			p.concurrentGoroutines <- struct{}{}
+		}
+		go p.cws[i].conWorker(ctx, p.clientConf, p.SSHAuthSocket, p.conInstances)
+	}
+	return len(p.cws)
+}
+
+func (p *Pssh) getConInstanceErrs() error {
+	for con := range p.conInstances {
+		if con.err != nil {
+			// nolint: errcheck,gosec
+			return fmt.Errorf("host:%s err:%s", con.host, con.err)
+		}
+	}
+	return nil
 }
 
 /*

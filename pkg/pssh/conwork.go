@@ -39,6 +39,9 @@ func (c *conWork) dialSocket(authConn *net.Conn, socket string) error {
 }
 
 func (c *conWork) conWorker(ctx context.Context, config ssh.ClientConfig, socket string, instanceCh chan<- conInstance) {
+	if c.Pssh == nil {
+		return
+	}
 	if c.Concurrency > 0 {
 		defer func() { <-c.concurrentGoroutines }()
 	}
@@ -66,12 +69,18 @@ func (c *conWork) conWorker(ctx context.Context, config ssh.ClientConfig, socket
 	}
 	// nolint: errcheck
 	defer conn.Close()
+	c.commandLoop(ctx, conn, true)
+}
+
+func (c *conWork) commandLoop(ctx context.Context, conn sshClientIface, loop bool) {
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case cmd := <-c.command:
 			c.startSession(ctx, conn, cmd)
+		}
+		if !loop {
 			return
 		}
 	}

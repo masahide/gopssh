@@ -2,8 +2,12 @@ package pssh
 
 import (
 	"bytes"
+	"context"
+	"fmt"
+	"log"
 	"net"
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/fatih/color"
@@ -158,5 +162,113 @@ func TestPrint(t *testing.T) {
 	p.Printf("fuga%s", "hoge")
 	if buf.String() != "fugahoge" {
 		t.Errorf("buf:%s, want:fugahoge", buf.String())
+	}
+}
+
+func TestRunConWorkers(t *testing.T) {
+	p := &Pssh{
+		concurrentGoroutines: make(chan struct{}, 1),
+		Config:               &Config{Concurrency: 1},
+	}
+	p.cws = []*conWork{{}}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	i := p.runConWorkers(ctx)
+	if i != 1 {
+		t.Error("i!=1")
+	}
+
+}
+
+func TestGetConInstanceErrs(t *testing.T) {
+	p := &Pssh{}
+	p.conInstances = make(chan conInstance, 1)
+	p.conInstances <- conInstance{
+		err:     errors.New("hoge"),
+		conWork: &conWork{host: "host1"},
+	}
+	close(p.conInstances)
+	p.cws = []*conWork{{}}
+	err := p.getConInstanceErrs()
+	if err.Error() != "host:host1 err:hoge" {
+		t.Errorf("err=%s,want:host:host1 err:hoge", err.Error())
+	}
+	p.conInstances = make(chan conInstance, 1)
+	p.conInstances <- conInstance{
+		conWork: &conWork{host: ""},
+		err:     nil,
+	}
+	close(p.conInstances)
+	p.cws = []*conWork{{}}
+	err = p.getConInstanceErrs()
+	if err != nil {
+		t.Error("err != nil")
+	}
+}
+
+type mockPrin struct {
+	buf bytes.Buffer
+}
+
+func (p *mockPrin) Print(a ...interface{}) (n int, err error) {
+	fmt.Fprint(&p.buf, a...)
+	return 0, nil
+}
+func (p *mockPrin) Printf(format string, a ...interface{}) (n int, err error) {
+	fmt.Fprintf(&p.buf, format, a...)
+	return 0, nil
+}
+
+func TestPrintResults(t *testing.T) {
+	p := &Pssh{
+		Config: &Config{
+			ShowHostName: true,
+		},
+	}
+	p.print = newPrint(os.Stdout, false)
+	p.conInstances = make(chan conInstance, 1)
+	p.conInstances <- conInstance{
+		err:     errors.New("hoge"),
+		conWork: &conWork{host: "host1"},
+	}
+	mock := mockPrin{}
+	p.red = &mock
+	p.boldRed = &mock
+	p.green = &mock
+	results := make(chan *result)
+	cws := []*conWork{
+		{},
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() {
+		results <- &result{
+			conID:  0,
+			stdout: &bytes.Buffer{},
+			stderr: &bytes.Buffer{},
+		}
+	}()
+	p.printResults(ctx, results, cws)
+	if !strings.HasPrefix(mock.buf.String(), "  reslut code 0") {
+		t.Errorf("buf=%s, want:'  reslut code 0'", mock.buf.String())
+	}
+}
+
+func TestPsshRun(t *testing.T) {
+	p := &Pssh{Config: &Config{}}
+	p.Hostsfile = "test/null"
+	b := bytes.Buffer{}
+	log.SetFlags(0)
+	log.SetOutput(&b)
+	p.Init()
+	p.Run()
+	if !strings.HasPrefix(b.String(), "read hosts") {
+		t.Errorf("b=%s,want:read hosts..", b.String())
+	}
+	p.IgnoreHostKey = true
+	b.Reset()
+	p.Run()
+	if b.String() != "" {
+		t.Errorf("b=%s,want:''", b.String())
 	}
 }
