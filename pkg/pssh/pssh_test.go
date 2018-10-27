@@ -3,8 +3,10 @@ package pssh
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"net"
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/fatih/color"
@@ -200,5 +202,53 @@ func TestGetConInstanceErrs(t *testing.T) {
 	err = p.getConInstanceErrs()
 	if err != nil {
 		t.Error("err != nil")
+	}
+}
+
+type mockPrin struct {
+	buf bytes.Buffer
+}
+
+func (p *mockPrin) Print(a ...interface{}) (n int, err error) {
+	fmt.Fprint(&p.buf, a...)
+	return 0, nil
+}
+func (p *mockPrin) Printf(format string, a ...interface{}) (n int, err error) {
+	fmt.Fprintf(&p.buf, format, a...)
+	return 0, nil
+}
+
+func TestPrintResults(t *testing.T) {
+	p := &Pssh{
+		Config: &Config{
+			ShowHostName: true,
+		},
+	}
+	p.print = newPrint(os.Stdout, false)
+	p.conInstances = make(chan conInstance, 1)
+	p.conInstances <- conInstance{
+		err:     errors.New("hoge"),
+		conWork: &conWork{host: "host1"},
+	}
+	mock := mockPrin{}
+	p.red = &mock
+	p.boldRed = &mock
+	p.green = &mock
+	results := make(chan *result)
+	cws := []*conWork{
+		&conWork{},
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() {
+		results <- &result{
+			conID:  0,
+			stdout: &bytes.Buffer{},
+			stderr: &bytes.Buffer{},
+		}
+	}()
+	p.printResults(ctx, results, cws)
+	if !strings.HasPrefix(mock.buf.String(), "  reslut code 0") {
+		t.Errorf("buf=%s, want:'  reslut code 0'", mock.buf.String())
 	}
 }
