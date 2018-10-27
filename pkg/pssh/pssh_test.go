@@ -236,7 +236,7 @@ func TestPrintResults(t *testing.T) {
 	p.green = &mock
 	results := make(chan *result)
 	cws := []*conWork{
-		&conWork{},
+		{},
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
