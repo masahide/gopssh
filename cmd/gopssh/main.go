@@ -64,6 +64,7 @@ func checkFlag(w io.Writer) (ret int, exit bool) {
 	}
 	if flag.NArg() == 0 {
 		flag.Usage()
+		// nolint: errcheck
 		fmt.Fprintf(w, "example:\n$ ./gopssh -h <(echo host1 host2) ls -la /etc/\n")
 		return 2, true
 	}

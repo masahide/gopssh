@@ -2,6 +2,7 @@ package pssh
 
 import (
 	"bytes"
+	"context"
 	"net"
 	"os"
 	"testing"
@@ -158,5 +159,46 @@ func TestPrint(t *testing.T) {
 	p.Printf("fuga%s", "hoge")
 	if buf.String() != "fugahoge" {
 		t.Errorf("buf:%s, want:fugahoge", buf.String())
+	}
+}
+
+func TestRunConWorkers(t *testing.T) {
+	p := &Pssh{
+		concurrentGoroutines: make(chan struct{}, 1),
+		Config:               &Config{Concurrency: 1},
+	}
+	p.cws = []*conWork{{}}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	i := p.runConWorkers(ctx)
+	if i != 1 {
+		t.Error("i!=1")
+	}
+
+}
+
+func TestGetConInstanceErrs(t *testing.T) {
+	p := &Pssh{}
+	p.conInstances = make(chan conInstance, 1)
+	p.conInstances <- conInstance{
+		err:     errors.New("hoge"),
+		conWork: &conWork{host: "host1"},
+	}
+	close(p.conInstances)
+	p.cws = []*conWork{{}}
+	err := p.getConInstanceErrs()
+	if err.Error() != "host:host1 err:hoge" {
+		t.Errorf("err=%s,want:host:host1 err:hoge", err.Error())
+	}
+	p.conInstances = make(chan conInstance, 1)
+	p.conInstances <- conInstance{
+		conWork: &conWork{host: ""},
+		err:     nil,
+	}
+	close(p.conInstances)
+	p.cws = []*conWork{{}}
+	err = p.getConInstanceErrs()
+	if err != nil {
+		t.Error("err != nil")
 	}
 }
