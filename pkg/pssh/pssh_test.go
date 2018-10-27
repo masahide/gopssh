@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"log"
 	"net"
 	"os"
 	"strings"
@@ -250,5 +251,24 @@ func TestPrintResults(t *testing.T) {
 	p.printResults(ctx, results, cws)
 	if !strings.HasPrefix(mock.buf.String(), "  reslut code 0") {
 		t.Errorf("buf=%s, want:'  reslut code 0'", mock.buf.String())
+	}
+}
+
+func TestPsshRun(t *testing.T) {
+	p := &Pssh{Config: &Config{}}
+	p.Hostsfile = "test/null"
+	b := bytes.Buffer{}
+	log.SetFlags(0)
+	log.SetOutput(&b)
+	p.Init()
+	p.Run()
+	if !strings.HasPrefix(b.String(), "read hosts") {
+		t.Errorf("b=%s,want:read hosts..", b.String())
+	}
+	p.IgnoreHostKey = true
+	b.Reset()
+	p.Run()
+	if b.String() != "" {
+		t.Errorf("b=%s,want:''", b.String())
 	}
 }
