@@ -300,7 +300,7 @@ func TestGetIdentFilesAuthMethods(t *testing.T) {
 	p := &Pssh{Config: &Config{ColorMode: true}}
 	p.Init()
 	p.SSHAuthSocket = "/dev/null"
-	f := p.getIdentFileAuthMethods([][]byte{[]byte{}})
+	f := p.getIdentFileAuthMethods([][]byte{{}})
 	if len(f) != 0 {
 		t.Error("len(f)!=0")
 	}

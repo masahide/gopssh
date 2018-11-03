@@ -452,8 +452,8 @@ type sshKeyAgent struct {
 	authConn net.Conn
 }
 
-func (s *sshKeyAgent) close() {
-	s.authConn.Close()
+func (s *sshKeyAgent) close() error {
+	return s.authConn.Close()
 }
 
 func (p *Pssh) sshKeyAgentCallback() *sshKeyAgent {
@@ -521,7 +521,8 @@ func (p *Pssh) readIdentFiles() [][]byte {
 	res := make([][]byte, 0, len(p.IdentFiles))
 	home := os.Getenv("HOME")
 	for _, filePath := range p.IdentFiles {
-		filePath = strings.Replace("filePath", "~", home, 1)
+		// nolint: gosec
+		filePath = strings.Replace(filePath, "~", home, 1)
 		buffer, err := ioutil.ReadFile(filePath)
 		if err != nil {
 			continue
