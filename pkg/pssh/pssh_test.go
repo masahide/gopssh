@@ -12,7 +12,9 @@ import (
 
 	"github.com/fatih/color"
 	"github.com/pkg/errors"
+	"golang.org/x/crypto/ssh"
 	"golang.org/x/crypto/ssh/agent"
+	"golang.org/x/crypto/ssh/testdata"
 )
 
 /*
@@ -271,4 +273,63 @@ func TestPsshRun(t *testing.T) {
 	if b.String() != "" {
 		t.Errorf("b=%s,want:''", b.String())
 	}
+}
+
+func TestDialSocket(t *testing.T) {
+	p := &Pssh{Config: &Config{ColorMode: true}}
+	p.Init()
+	p.netDialer = mockNetDial{}
+	var authConn net.Conn
+	err := p.dialSocket(&authConn, "")
+	if err != nil {
+		t.Error(err)
+	}
+}
+func TestSshKeyAgentCallback(t *testing.T) {
+	p := &Pssh{Config: &Config{ColorMode: true}}
+	p.Init()
+	p.netDialer = mockNetDial{}
+	p.SSHAuthSocket = "/dev/null"
+	f := p.sshKeyAgentCallback()
+	if f == nil {
+		t.Error("f==nil")
+	}
+
+}
+func TestGetIdentFilesAuthMethods(t *testing.T) {
+	p := &Pssh{Config: &Config{ColorMode: true}}
+	p.Init()
+	p.SSHAuthSocket = "/dev/null"
+	f := p.getIdentFileAuthMethods([][]byte{[]byte{}})
+	if len(f) != 0 {
+		t.Error("len(f)!=0")
+	}
+	f = p.getIdentFileAuthMethods([][]byte{testdata.PEMBytes["dsa"]})
+	if len(f) != 1 {
+		t.Errorf("len(f)==%d,want=1", len(f))
+	}
+
+}
+func TestMerageAuthMethods(t *testing.T) {
+	p := &Pssh{Config: &Config{ColorMode: true}}
+	p.Init()
+	p.netDialer = mockNetDial{}
+	p.IdentityFileOnly = false
+	identMethods := p.getIdentFileAuthMethods([][]byte{testdata.PEMBytes["dsa"]})
+	k, f := p.merageAuthMethods(identMethods)
+	if len(f) != 1 {
+		t.Errorf("len(f)==%d,want=1", len(f))
+	}
+	if k != nil {
+		t.Error("k!=nil")
+	}
+	p.IdentityFileOnly = true
+	k, f = p.merageAuthMethods([]ssh.AuthMethod{})
+	if len(f) != 0 {
+		t.Errorf("len(f)==%d,want=0", len(f))
+	}
+	if k != nil {
+		t.Error("k!=nil")
+	}
+
 }

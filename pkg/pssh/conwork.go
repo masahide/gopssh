@@ -8,7 +8,6 @@ import (
 
 	"github.com/cenkalti/backoff"
 	"golang.org/x/crypto/ssh"
-	"golang.org/x/crypto/ssh/agent"
 )
 
 type conWork struct {
@@ -45,14 +44,21 @@ func (c *conWork) conWorker(ctx context.Context, config ssh.ClientConfig, socket
 	if c.Concurrency > 0 {
 		defer func() { <-c.concurrentGoroutines }()
 	}
-	var authConn net.Conn
-	if err := c.dialSocket(&authConn, socket); err != nil {
-		log.Fatalf("net.Dial: %v", err)
+	sshKeyAgent, authMethods := c.merageAuthMethods(c.getIdentFileAuthMethods(c.identFileData))
+	if sshKeyAgent != nil {
+		defer sshKeyAgent.close()
 	}
-	// nolint: errcheck
-	defer authConn.Close()
-	agentClient := agent.NewClient(authConn)
-	config.Auth = []ssh.AuthMethod{ssh.PublicKeysCallback(agentClient.Signers)}
+	config.Auth = authMethods
+	/*
+		var authConn net.Conn
+		if err := c.dialSocket(&authConn, socket); err != nil {
+			log.Fatalf("net.Dial: %v", err)
+		}
+		// nolint: errcheck
+		defer authConn.Close()
+		agentClient := agent.NewClient(authConn)
+		config.Auth = []ssh.AuthMethod{ssh.PublicKeysCallback(agentClient.Signers)}
+	*/
 
 	res := conInstance{conWork: c, err: nil}
 	if c.Debug {

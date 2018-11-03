@@ -16,9 +16,11 @@ import (
 	"sync"
 	"time"
 
+	"github.com/cenkalti/backoff"
 	"github.com/fatih/color"
 	"github.com/pkg/errors"
 	"golang.org/x/crypto/ssh"
+	"golang.org/x/crypto/ssh/agent"
 	"golang.org/x/crypto/ssh/knownhosts"
 )
 
@@ -103,27 +105,30 @@ type Pssh struct {
 	stdoutPool           sync.Pool
 	stderrPool           sync.Pool
 	//netDial              func(network, address string) (net.Conn, error)
-	netDialer    dialIface
-	sshDialer    sshDialIface
-	conInstances chan conInstance
-	cws          []*conWork
-	clientConf   ssh.ClientConfig
+	netDialer     dialIface
+	sshDialer     sshDialIface
+	conInstances  chan conInstance
+	cws           []*conWork
+	clientConf    ssh.ClientConfig
+	identFileData [][]byte
 }
 
 // Config pssh config
 type Config struct {
-	Concurrency   int
-	User          string
-	Hostsfile     string
-	ShowHostName  bool
-	ColorMode     bool
-	IgnoreHostKey bool
-	Debug         bool
-	StdinFlag     bool
-	Timeout       time.Duration
-	KexFlag       string
-	SSHAuthSocket string
+	Concurrency      int
+	User             string
+	Hostsfile        string
+	ShowHostName     bool
+	ColorMode        bool
+	IgnoreHostKey    bool
+	Debug            bool
+	StdinFlag        bool
+	IdentityFileOnly bool
+	Timeout          time.Duration
+	KexFlag          string
+	SSHAuthSocket    string
 
+	IdentFiles []string
 	// ciphers
 	Kex     []string
 	Ciphers []string
@@ -174,6 +179,7 @@ func (p *Pssh) Init() {
 	p.stderrPool = sync.Pool{New: newBytesBuf}
 	p.netDialer = netDial{}
 	p.sshDialer = sshDial{}
+	p.identFileData = p.readIdentFiles()
 }
 
 type input struct {
@@ -267,7 +273,7 @@ func (p *Pssh) Run() int {
 	}
 	p.clientConf = ssh.ClientConfig{
 		User: p.User,
-		//Auth: []ssh.AuthMethod{ ssh.PublicKeysCallback(agentClient.Signers), },
+		//Auth:            p.getAuthMethods(),
 		Timeout:         p.Timeout,
 		HostKeyCallback: hc,
 		Config:          ssh.Config{KeyExchanges: p.Config.Kex, Ciphers: p.Config.Ciphers, MACs: p.Config.Macs},
@@ -425,4 +431,102 @@ func readStream(ctx context.Context, out io.Writer, r io.Reader, errCh chan<- er
 	case errCh <- err:
 	case <-ctx.Done():
 	}
+}
+
+func (p *Pssh) dialSocket(authConn *net.Conn, socket string) error {
+	// https://stackoverflow.com/questions/30228482/golang-unix-socket-error-dial-resource-temporarily-unavailable
+	return backoff.Retry(func() error {
+		var err error
+		*authConn, err = p.netDialer.Dial("unix", socket)
+		if err != nil {
+			if terr, ok := err.(TemporaryError); ok && terr.Temporary() {
+				return err
+			}
+		}
+		return nil
+	}, backoff.NewExponentialBackOff())
+}
+
+type sshKeyAgent struct {
+	ssh.AuthMethod
+	authConn net.Conn
+}
+
+func (s *sshKeyAgent) close() {
+	s.authConn.Close()
+}
+
+func (p *Pssh) sshKeyAgentCallback() *sshKeyAgent {
+	if len(p.SSHAuthSocket) == 0 {
+		return nil
+	}
+	res := sshKeyAgent{}
+	if err := p.dialSocket(&res.authConn, p.SSHAuthSocket); err != nil {
+		// log.Fatalf("net.Dial: %v", err)
+		return nil
+	}
+	// nolint: errcheck
+	agentClient := agent.NewClient(res.authConn)
+	res.AuthMethod = ssh.PublicKeysCallback(agentClient.Signers)
+	return &res
+}
+
+/*
+func (p *Pssh) sshPrivateKeyCallback(filePath string) ssh.AuthMethod {
+	buffer, err := ioutil.ReadFile(filePath)
+	if err != nil {
+		return nil
+	}
+
+	key, err := ssh.ParsePrivateKey(buffer)
+	if err != nil {
+		return nil
+	}
+	return ssh.PublicKeys(key)
+}
+*/
+
+func (p *Pssh) merageAuthMethods(identMethods []ssh.AuthMethod) (*sshKeyAgent, []ssh.AuthMethod) {
+	res := make([]ssh.AuthMethod, 0, len(identMethods)+1)
+	var keyAgentMehod *sshKeyAgent
+	if !p.IdentityFileOnly {
+		if keyAgentMehod = p.sshKeyAgentCallback(); keyAgentMehod != nil {
+			res = append(res, keyAgentMehod)
+		}
+	}
+	return keyAgentMehod, append(res, identMethods...)
+}
+
+func (p *Pssh) getIdentFileAuthMethods(identFileData [][]byte) []ssh.AuthMethod {
+	/*
+		if !p.IdentityFileOnly {
+			f := p.sshKeyAgentCallback()
+			if f != nil {
+				res = append(res, f)
+			}
+		}
+	*/
+	res := make([]ssh.AuthMethod, 0, len(identFileData))
+	for _, data := range identFileData {
+		key, err := ssh.ParsePrivateKey(data)
+		if err != nil {
+			continue
+		}
+		res = append(res, ssh.PublicKeys(key))
+	}
+	return res
+}
+
+func (p *Pssh) readIdentFiles() [][]byte {
+	res := make([][]byte, 0, len(p.IdentFiles))
+	home := os.Getenv("HOME")
+	for _, filePath := range p.IdentFiles {
+		filePath = strings.Replace("filePath", "~", home, 1)
+		buffer, err := ioutil.ReadFile(filePath)
+		if err != nil {
+			continue
+		}
+		res = append(res, buffer)
+	}
+	return res
 }
