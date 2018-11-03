@@ -355,3 +355,24 @@ func TestNewConWork(t *testing.T) {
 		}
 	}
 }
+
+func TestReadIdentFiles(t *testing.T) {
+	var tests = []struct {
+		home       string
+		identFiles []string
+		want       [][]byte
+	}{
+		{"./test", []string{"~/ident"}, [][]byte{[]byte("abc\n")}},
+	}
+	for _, test := range tests {
+		os.Setenv("HOME", test.home)
+		p := &Pssh{Config: &Config{IdentFiles: test.identFiles}}
+		res := p.readIdentFiles()
+		if len(res) != len(test.want) {
+			t.Errorf("res:%v,want:%v", res, test.want)
+		}
+		if bytes.Compare(res[0], test.want[0]) != 0 {
+			t.Errorf("res:%v,want:%v", res, test.want)
+		}
+	}
+}
