@@ -371,7 +371,7 @@ func TestReadIdentFiles(t *testing.T) {
 		if len(res) != len(test.want) {
 			t.Errorf("res:%v,want:%v", res, test.want)
 		}
-		if bytes.Compare(res[0], test.want[0]) != 0 {
+		if !bytes.Equal(res[0], test.want[0]) {
 			t.Errorf("res:%v,want:%v", res, test.want)
 		}
 	}
