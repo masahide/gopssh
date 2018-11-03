@@ -333,3 +333,25 @@ func TestMergeAuthMethods(t *testing.T) {
 	}
 
 }
+
+func TestNewConWork(t *testing.T) {
+	var tests = []struct {
+		id   int
+		host string
+	}{
+		{1, "1"},
+		{2, ""},
+	}
+	for _, test := range tests {
+		p := &Pssh{
+			Config: &Config{},
+		}
+		c := p.newConWork(test.id, test.host)
+		if c.id != test.id {
+			t.Errorf("c.id=%d,test.id=%d", c.id, test.id)
+		}
+		if c.host != test.host {
+			t.Errorf("c.host=%s,test.host=%s", c.host, test.host)
+		}
+	}
+}
