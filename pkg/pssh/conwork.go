@@ -21,22 +21,6 @@ type TemporaryError interface {
 	Temporary() bool
 }
 
-/*
-func (c *conWork) dialSocket(authConn *net.Conn, socket string) error {
-	// https://stackoverflow.com/questions/30228482/golang-unix-socket-error-dial-resource-temporarily-unavailable
-	return backoff.Retry(func() error {
-		var err error
-		*authConn, err = c.netDialer.Dial("unix", socket)
-		if err != nil {
-			if terr, ok := err.(TemporaryError); ok && terr.Temporary() {
-				return err
-			}
-		}
-		return nil
-	}, backoff.NewExponentialBackOff())
-}
-*/
-
 func (c *conWork) conWorker(ctx context.Context, config ssh.ClientConfig, socket string, instanceCh chan<- conInstance) {
 	if c.Pssh == nil {
 		return
