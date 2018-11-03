@@ -28,7 +28,7 @@ func (c *conWork) conWorker(ctx context.Context, config ssh.ClientConfig, socket
 	if c.Concurrency > 0 {
 		defer func() { <-c.concurrentGoroutines }()
 	}
-	sshKeyAgent, authMethods := c.merageAuthMethods(c.getIdentFileAuthMethods(c.identFileData))
+	sshKeyAgent, authMethods := c.mergeAuthMethods(c.getIdentFileAuthMethods(c.identFileData))
 	if sshKeyAgent != nil {
 		// nolint: errcheck
 		defer sshKeyAgent.close()

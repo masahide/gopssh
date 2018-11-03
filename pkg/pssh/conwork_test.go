@@ -2,6 +2,7 @@ package pssh
 
 import (
 	"context"
+	"errors"
 	"net"
 	"testing"
 	"time"
@@ -51,10 +52,12 @@ func (c *conSSHMock) ListenTCP(laddr *net.TCPAddr) (net.Listener, error)        
 func (c *conSSHMock) ListenUnix(socketPath string) (net.Listener, error)            { return nil, nil }
 func (c *conSSHMock) NewSession() (*ssh.Session, error)                             { return nil, nil }
 
-type mockSSHDial struct{}
+type mockSSHDial struct {
+	err error
+}
 
 func (n mockSSHDial) Dial(network, addr string, config *ssh.ClientConfig) (sshClientIface, error) {
-	return &conSSHMock{}, nil
+	return &conSSHMock{}, n.err
 }
 
 func mockStartSessionWorker(ctx context.Context, conn sshClientIface, cmd input) {
@@ -62,25 +65,43 @@ func mockStartSessionWorker(ctx context.Context, conn sshClientIface, cmd input)
 }
 
 func TestConWorker(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	p := &Pssh{Config: &Config{ColorMode: true}}
-	p.Init()
-	p.netDialer = mockNetDial{}
-	p.sshDialer = mockSSHDial{}
-	c := &conWork{
-		Pssh:         p,
-		id:           1,
-		host:         "host1",
-		command:      make(chan input, 1),
-		startSession: mockStartSessionWorker,
+
+	var tests = []struct {
+		err  error
+		done bool
+		want string
+	}{
+		{nil, false, ""},
+		{errors.New("hoge"), true, "hoge"},
 	}
-	conInstances := make(chan conInstance, 1)
-	go c.conWorker(ctx, ssh.ClientConfig{}, "", conInstances)
-	results := make(chan *result, 1)
-	c.command <- input{command: "", stdin: "", results: results}
-	res := <-results
-	if res.err != nil {
-		t.Error(res)
+	for _, test := range tests {
+		ctx, cancel := context.WithCancel(context.Background())
+		p := &Pssh{Config: &Config{ColorMode: true}}
+		p.Concurrency = 1
+		p.Init()
+		p.netDialer = mockNetDial{}
+		p.sshDialer = mockSSHDial{err: test.err}
+		c := &conWork{
+			Pssh:         p,
+			id:           1,
+			host:         "host1",
+			command:      make(chan input, 1),
+			startSession: mockStartSessionWorker,
+		}
+		conInstances := make(chan conInstance, 1)
+		results := make(chan *result, 1)
+		c.command <- input{command: "", stdin: "", results: results}
+		go c.conWorker(ctx, ssh.ClientConfig{}, "", conInstances)
+		if test.done {
+			cancel()
+		}
+		select {
+		case <-ctx.Done():
+		case res := <-results:
+			if res.err != nil {
+				t.Error(res)
+			}
+		}
+		cancel()
 	}
 }

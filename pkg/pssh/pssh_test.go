@@ -310,13 +310,13 @@ func TestGetIdentFilesAuthMethods(t *testing.T) {
 	}
 
 }
-func TestMerageAuthMethods(t *testing.T) {
+func TestMergeAuthMethods(t *testing.T) {
 	p := &Pssh{Config: &Config{ColorMode: true}}
 	p.Init()
 	p.netDialer = mockNetDial{}
 	p.IdentityFileOnly = false
 	identMethods := p.getIdentFileAuthMethods([][]byte{testdata.PEMBytes["dsa"]})
-	k, f := p.merageAuthMethods(identMethods)
+	k, f := p.mergeAuthMethods(identMethods)
 	if len(f) != 1 {
 		t.Errorf("len(f)==%d,want=1", len(f))
 	}
@@ -324,7 +324,7 @@ func TestMerageAuthMethods(t *testing.T) {
 		t.Error("k!=nil")
 	}
 	p.IdentityFileOnly = true
-	k, f = p.merageAuthMethods([]ssh.AuthMethod{})
+	k, f = p.mergeAuthMethods([]ssh.AuthMethod{})
 	if len(f) != 0 {
 		t.Errorf("len(f)==%d,want=0", len(f))
 	}

@@ -486,7 +486,7 @@ func (p *Pssh) sshPrivateKeyCallback(filePath string) ssh.AuthMethod {
 }
 */
 
-func (p *Pssh) merageAuthMethods(identMethods []ssh.AuthMethod) (*sshKeyAgent, []ssh.AuthMethod) {
+func (p *Pssh) mergeAuthMethods(identMethods []ssh.AuthMethod) (*sshKeyAgent, []ssh.AuthMethod) {
 	res := make([]ssh.AuthMethod, 0, len(identMethods)+1)
 	var keyAgentMehod *sshKeyAgent
 	if !p.IdentityFileOnly {
@@ -501,8 +501,7 @@ func (p *Pssh) getIdentFileAuthMethods(identFileData [][]byte) []ssh.AuthMethod 
 	/*
 		if !p.IdentityFileOnly {
 			f := p.sshKeyAgentCallback()
-			if f != nil {
-				res = append(res, f)
+			if f != nil { res = append(res, f)
 			}
 		}
 	*/
