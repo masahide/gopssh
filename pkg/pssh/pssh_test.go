@@ -363,6 +363,7 @@ func TestReadIdentFiles(t *testing.T) {
 		want       [][]byte
 	}{
 		{"./test", []string{"~/ident"}, [][]byte{[]byte("abc\n")}},
+		{"./test", []string{"~/hoge"}, [][]byte{}},
 	}
 	for _, test := range tests {
 		os.Setenv("HOME", test.home)
@@ -371,8 +372,10 @@ func TestReadIdentFiles(t *testing.T) {
 		if len(res) != len(test.want) {
 			t.Errorf("res:%v,want:%v", res, test.want)
 		}
-		if !bytes.Equal(res[0], test.want[0]) {
-			t.Errorf("res:%v,want:%v", res, test.want)
+		if len(test.want) > 0 {
+			if !bytes.Equal(res[0], test.want[0]) {
+				t.Errorf("res:%v,want:%v", res, test.want)
+			}
 		}
 	}
 }
