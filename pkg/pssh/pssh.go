@@ -254,7 +254,6 @@ func (p *Pssh) Run() int {
 	}
 	go p.runConWorkers(ctx)
 	go func() {
-		// nolint: vetshadow
 		if err := p.getConInstanceErrs(); err != nil {
 			log.Print(err)
 			cancel()
@@ -288,7 +287,7 @@ func (p *Pssh) runConWorkers(ctx context.Context) int {
 		if p.Concurrency > 0 {
 			p.concurrentGoroutines <- struct{}{}
 		}
-		go p.cws[i].conWorker(ctx, p.clientConf, p.SSHAuthSocket, p.conInstances)
+		go p.cws[i].conWorker(ctx, p.clientConf, p.conInstances)
 	}
 	return len(p.cws)
 }

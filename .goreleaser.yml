@@ -1,5 +1,9 @@
+before:
+  hooks:
+  - go mod download
 builds:
-  -
+  - env:
+    - CGO_ENABLED=0
     main: cmd/gopssh/main.go
     binary: gopssh
     goos:
@@ -28,7 +32,6 @@ archive:
   replacements:
     darwin: Darwin
     linux: Linux
-    windows: Windows
     amd64: x86_64
 brew:
   github:

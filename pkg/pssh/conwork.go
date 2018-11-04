@@ -21,7 +21,7 @@ type TemporaryError interface {
 	Temporary() bool
 }
 
-func (c *conWork) conWorker(ctx context.Context, config ssh.ClientConfig, socket string, instanceCh chan<- conInstance) {
+func (c *conWork) conWorker(ctx context.Context, config ssh.ClientConfig, instanceCh chan<- conInstance) {
 	if c.Pssh == nil {
 		return
 	}
