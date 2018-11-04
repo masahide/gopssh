@@ -11,6 +11,14 @@ import (
 	"golang.org/x/crypto/ssh/terminal"
 )
 
+const (
+	defaultKexFlags     = "diffie-hellman-group1-sha1,diffie-hellman-group14-sha1,ecdh-sha2-nistp256,ecdh-sha2-nistp384,ecdh-sha2-nistp521,curve25519-sha256@libssh.org"
+	defaultCiphersFlags = "arcfour256,aes128-gcm@openssh.com,chacha20-poly1305@openssh.com,aes128-ctr,aes192-ctr,aes256-ctr"
+	defaultMacsFlags    = "hmac-sha1-96,hmac-sha1,hmac-sha2-256,hmac-sha2-256-etm@openssh.com"
+	// https://man.openbsd.org/ssh_config#IdentityFile
+	defaultIdentityFiles = "~/.ssh/id_dsa,~/.ssh/id_ecdsa,~/.ssh/id_ed25519,~/.ssh/id_rsa"
+)
+
 var (
 	// Version is version number
 	Version = "dev"
@@ -20,9 +28,10 @@ var (
 )
 
 func newConfig() *pssh.Config {
-	kexFlag := "diffie-hellman-group1-sha1,diffie-hellman-group14-sha1,ecdh-sha2-nistp256,ecdh-sha2-nistp384,ecdh-sha2-nistp521,curve25519-sha256@libssh.org"
-	ciphersFlag := "arcfour256,aes128-gcm@openssh.com,chacha20-poly1305@openssh.com,aes128-ctr,aes192-ctr,aes256-ctr"
-	macsFlag := "hmac-sha1-96,hmac-sha1,hmac-sha2-256,hmac-sha2-256-etm@openssh.com"
+	kexFlag := defaultKexFlags
+	ciphersFlag := defaultCiphersFlags
+	macsFlag := defaultMacsFlags
+	identityFiles := defaultIdentityFiles
 	c := pssh.Config{
 		Concurrency:   0,
 		User:          os.Getenv("USER"),
@@ -45,10 +54,13 @@ func newConfig() *pssh.Config {
 	flag.StringVar(&kexFlag, "kex", kexFlag, "allowed key exchanges algorithms")
 	flag.StringVar(&ciphersFlag, "ciphers", ciphersFlag, "allowed cipher algorithms")
 	flag.StringVar(&macsFlag, "macs", macsFlag, "allowed MAC algorithms")
+	flag.StringVar(&identityFiles, "i", identityFiles, "identity files")
 	flag.Parse()
 	c.Kex = pssh.ToSlice(kexFlag)
 	c.Ciphers = pssh.ToSlice(ciphersFlag)
 	c.Macs = pssh.ToSlice(macsFlag)
+	c.IdentityFileOnly = identityFiles != defaultIdentityFiles
+	c.IdentFiles = pssh.ToSlice(identityFiles)
 
 	// see: https://qiita.com/tanksuzuki/items/e712717675faf4efb07a#パイプで渡された時だけ処理する
 	c.StdinFlag = !terminal.IsTerminal(0)

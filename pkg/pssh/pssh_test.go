@@ -12,7 +12,9 @@ import (
 
 	"github.com/fatih/color"
 	"github.com/pkg/errors"
+	"golang.org/x/crypto/ssh"
 	"golang.org/x/crypto/ssh/agent"
+	"golang.org/x/crypto/ssh/testdata"
 )
 
 /*
@@ -270,5 +272,110 @@ func TestPsshRun(t *testing.T) {
 	p.Run()
 	if b.String() != "" {
 		t.Errorf("b=%s,want:''", b.String())
+	}
+}
+
+func TestDialSocket(t *testing.T) {
+	p := &Pssh{Config: &Config{ColorMode: true}}
+	p.Init()
+	p.netDialer = mockNetDial{}
+	var authConn net.Conn
+	err := p.dialSocket(&authConn, "")
+	if err != nil {
+		t.Error(err)
+	}
+}
+func TestSshKeyAgentCallback(t *testing.T) {
+	p := &Pssh{Config: &Config{ColorMode: true}}
+	p.Init()
+	p.netDialer = mockNetDial{}
+	p.SSHAuthSocket = "/dev/null"
+	f := p.sshKeyAgentCallback()
+	if f == nil {
+		t.Error("f==nil")
+	}
+
+}
+func TestGetIdentFilesAuthMethods(t *testing.T) {
+	p := &Pssh{Config: &Config{ColorMode: true}}
+	p.Init()
+	p.SSHAuthSocket = "/dev/null"
+	f := p.getIdentFileAuthMethods([][]byte{{}})
+	if len(f) != 0 {
+		t.Error("len(f)!=0")
+	}
+	f = p.getIdentFileAuthMethods([][]byte{testdata.PEMBytes["dsa"]})
+	if len(f) != 1 {
+		t.Errorf("len(f)==%d,want=1", len(f))
+	}
+
+}
+func TestMergeAuthMethods(t *testing.T) {
+	p := &Pssh{Config: &Config{ColorMode: true}}
+	p.Init()
+	p.netDialer = mockNetDial{}
+	p.IdentityFileOnly = false
+	identMethods := p.getIdentFileAuthMethods([][]byte{testdata.PEMBytes["dsa"]})
+	k, f := p.mergeAuthMethods(identMethods)
+	if len(f) != 1 {
+		t.Errorf("len(f)==%d,want=1", len(f))
+	}
+	if k != nil {
+		t.Error("k!=nil")
+	}
+	p.IdentityFileOnly = true
+	k, f = p.mergeAuthMethods([]ssh.AuthMethod{})
+	if len(f) != 0 {
+		t.Errorf("len(f)==%d,want=0", len(f))
+	}
+	if k != nil {
+		t.Error("k!=nil")
+	}
+
+}
+
+func TestNewConWork(t *testing.T) {
+	var tests = []struct {
+		id   int
+		host string
+	}{
+		{1, "1"},
+		{2, ""},
+	}
+	for _, test := range tests {
+		p := &Pssh{
+			Config: &Config{},
+		}
+		c := p.newConWork(test.id, test.host)
+		if c.id != test.id {
+			t.Errorf("c.id=%d,test.id=%d", c.id, test.id)
+		}
+		if c.host != test.host {
+			t.Errorf("c.host=%s,test.host=%s", c.host, test.host)
+		}
+	}
+}
+
+func TestReadIdentFiles(t *testing.T) {
+	var tests = []struct {
+		home       string
+		identFiles []string
+		want       [][]byte
+	}{
+		{"./test", []string{"~/ident"}, [][]byte{[]byte("abc\n")}},
+		{"./test", []string{"~/hoge"}, [][]byte{}},
+	}
+	for _, test := range tests {
+		os.Setenv("HOME", test.home)
+		p := &Pssh{Config: &Config{IdentFiles: test.identFiles}}
+		res := p.readIdentFiles()
+		if len(res) != len(test.want) {
+			t.Errorf("res:%v,want:%v", res, test.want)
+		}
+		if len(test.want) > 0 {
+			if !bytes.Equal(res[0], test.want[0]) {
+				t.Errorf("res:%v,want:%v", res, test.want)
+			}
+		}
 	}
 }

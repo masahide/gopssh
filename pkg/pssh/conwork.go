@@ -4,11 +4,8 @@ import (
 	"context"
 	"fmt"
 	"log"
-	"net"
 
-	"github.com/cenkalti/backoff"
 	"golang.org/x/crypto/ssh"
-	"golang.org/x/crypto/ssh/agent"
 )
 
 type conWork struct {
@@ -24,20 +21,6 @@ type TemporaryError interface {
 	Temporary() bool
 }
 
-func (c *conWork) dialSocket(authConn *net.Conn, socket string) error {
-	// https://stackoverflow.com/questions/30228482/golang-unix-socket-error-dial-resource-temporarily-unavailable
-	return backoff.Retry(func() error {
-		var err error
-		*authConn, err = c.netDialer.Dial("unix", socket)
-		if err != nil {
-			if terr, ok := err.(TemporaryError); ok && terr.Temporary() {
-				return err
-			}
-		}
-		return nil
-	}, backoff.NewExponentialBackOff())
-}
-
 func (c *conWork) conWorker(ctx context.Context, config ssh.ClientConfig, socket string, instanceCh chan<- conInstance) {
 	if c.Pssh == nil {
 		return
@@ -45,14 +28,22 @@ func (c *conWork) conWorker(ctx context.Context, config ssh.ClientConfig, socket
 	if c.Concurrency > 0 {
 		defer func() { <-c.concurrentGoroutines }()
 	}
-	var authConn net.Conn
-	if err := c.dialSocket(&authConn, socket); err != nil {
-		log.Fatalf("net.Dial: %v", err)
+	sshKeyAgent, authMethods := c.mergeAuthMethods(c.getIdentFileAuthMethods(c.identFileData))
+	if sshKeyAgent != nil {
+		// nolint: errcheck
+		defer sshKeyAgent.close()
 	}
-	// nolint: errcheck
-	defer authConn.Close()
-	agentClient := agent.NewClient(authConn)
-	config.Auth = []ssh.AuthMethod{ssh.PublicKeysCallback(agentClient.Signers)}
+	config.Auth = authMethods
+	/*
+		var authConn net.Conn
+		if err := c.dialSocket(&authConn, socket); err != nil {
+			log.Fatalf("net.Dial: %v", err)
+		}
+		// nolint: errcheck
+		defer authConn.Close()
+		agentClient := agent.NewClient(authConn)
+		config.Auth = []ssh.AuthMethod{ssh.PublicKeysCallback(agentClient.Signers)}
+	*/
 
 	res := conInstance{conWork: c, err: nil}
 	if c.Debug {
