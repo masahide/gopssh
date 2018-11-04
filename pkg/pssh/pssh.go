@@ -135,40 +135,6 @@ type Config struct {
 	Macs    []string
 }
 
-var (
-/*
-	concurrency   = flag.Int("p", 0, "concurrency (defalut \"0\" is unlimit)")
-	user          = flag.String("u", os.Getenv("USER"), "user")
-	hostsfile     = flag.String("h", "", "host file")
-	ShowHostName  = flag.Bool("d", false, "show hostname")
-	colorMode     = flag.Bool("c", false, "colorized outputs")
-	ignoreHostKey = flag.Bool("k", false, "Do not check the host key")
-	debug         = flag.Bool("debug", false, "debug outputs")
-	timeout       = flag.Duration("timeout", 5*time.Second, "maximum amount of time for the TCP connection to establish.")
-	kexFlag       = flag.String("kex",
-		"diffie-hellman-group1-sha1,diffie-hellman-group14-sha1,ecdh-sha2-nistp256,ecdh-sha2-nistp384,ecdh-sha2-nistp521,curve25519-sha256@libssh.org",
-		"allowed key exchanges algorithms",
-	)
-	ciphersFlag = flag.String("ciphers",
-		"arcfour256,aes128-gcm@openssh.com,chacha20-poly1305@openssh.com,aes128-ctr,aes192-ctr,aes256-ctr",
-		"allowed cipher algorithms")
-	macsFlag = flag.String("macs",
-		"hmac-sha1-96,hmac-sha1,hmac-sha2-256,hmac-sha2-256-etm@openssh.com",
-		"allowed MAC algorithms")
-	// "ssh-rsa,ssh-dss,ecdsa-sha2-nistp256,ecdsa-sha2-nistp384,ecdsa-sha2-nistp521,ssh-ed25519"
-
-	//stdoutPool = sync.Pool{New: newBytesBuf}
-	//stderrPool = sync.Pool{New: newBytesBuf}
-
-	sshAuthSocket = os.Getenv("SSH_AUTH_SOCK")
-
-	red                  = color.New()
-	boldRed              = color.New()
-	green                = color.New()
-	concurrentGoroutines chan struct{}
-*/
-)
-
 func newBytesBuf() interface{} { return new(bytes.Buffer) }
 
 // Init Pssh
@@ -471,21 +437,6 @@ func (p *Pssh) sshKeyAgentCallback() *sshKeyAgent {
 	return &res
 }
 
-/*
-func (p *Pssh) sshPrivateKeyCallback(filePath string) ssh.AuthMethod {
-	buffer, err := ioutil.ReadFile(filePath)
-	if err != nil {
-		return nil
-	}
-
-	key, err := ssh.ParsePrivateKey(buffer)
-	if err != nil {
-		return nil
-	}
-	return ssh.PublicKeys(key)
-}
-*/
-
 func (p *Pssh) mergeAuthMethods(identMethods []ssh.AuthMethod) (*sshKeyAgent, []ssh.AuthMethod) {
 	res := make([]ssh.AuthMethod, 0, len(identMethods)+1)
 	var keyAgentMehod *sshKeyAgent
@@ -498,13 +449,6 @@ func (p *Pssh) mergeAuthMethods(identMethods []ssh.AuthMethod) (*sshKeyAgent, []
 }
 
 func (p *Pssh) getIdentFileAuthMethods(identFileData [][]byte) []ssh.AuthMethod {
-	/*
-		if !p.IdentityFileOnly {
-			f := p.sshKeyAgentCallback()
-			if f != nil { res = append(res, f)
-			}
-		}
-	*/
 	res := make([]ssh.AuthMethod, 0, len(identFileData))
 	for _, data := range identFileData {
 		key, err := ssh.ParsePrivateKey(data)

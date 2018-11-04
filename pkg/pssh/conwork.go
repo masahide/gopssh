@@ -34,17 +34,6 @@ func (c *conWork) conWorker(ctx context.Context, config ssh.ClientConfig, socket
 		defer sshKeyAgent.close()
 	}
 	config.Auth = authMethods
-	/*
-		var authConn net.Conn
-		if err := c.dialSocket(&authConn, socket); err != nil {
-			log.Fatalf("net.Dial: %v", err)
-		}
-		// nolint: errcheck
-		defer authConn.Close()
-		agentClient := agent.NewClient(authConn)
-		config.Auth = []ssh.AuthMethod{ssh.PublicKeysCallback(agentClient.Signers)}
-	*/
-
 	res := conInstance{conWork: c, err: nil}
 	if c.Debug {
 		log.Printf("start ssh.Dial : %s", c.host)

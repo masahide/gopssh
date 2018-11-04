@@ -17,17 +17,6 @@ import (
 	"golang.org/x/crypto/ssh/testdata"
 )
 
-/*
-type testWriter struct{ result []byte }
-
-func newTestWriter() *testWriter { return &testWriter{[]byte{}} }
-
-func (w *testWriter) Write(p []byte) (n int, err error) {
-	w.result = append(w.result, p...)
-	return len(w.result), nil
-}
-*/
-
 func sliceEq(a, b []string) bool {
 
 	// If one is nil, the other must also be nil.
@@ -49,13 +38,6 @@ func sliceEq(a, b []string) bool {
 }
 
 func TestToSlice(t *testing.T) {
-	/*
-		tw := newTestWriter()
-		log.SetOutput(tw)
-		defer log.SetOutput(os.Stderr)
-		log.SetFlags(0)
-		defer log.SetFlags(log.LstdFlags)
-	*/
 	var tests = []struct {
 		s    string
 		want []string
