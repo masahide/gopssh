@@ -91,7 +91,7 @@ func TestConWorker(t *testing.T) {
 		conInstances := make(chan conInstance, 1)
 		results := make(chan *result, 1)
 		c.command <- input{command: "", stdin: "", results: results}
-		go c.conWorker(ctx, ssh.ClientConfig{}, "", conInstances)
+		go c.conWorker(ctx, ssh.ClientConfig{}, conInstances)
 		if test.done {
 			cancel()
 		}

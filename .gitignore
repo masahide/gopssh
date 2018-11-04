@@ -28,3 +28,8 @@ vendor
 coverage.txt
 *coverage.txt
 cover.html
+
+dist/
+bin/
+debug.test
+snap.login
