@@ -1,7 +1,7 @@
 dist: trusty
 sudo: required
 language: go
-go: '1.10.3'
+go: '1.11.x'
 services:
   - docker
 addons:
@@ -10,7 +10,7 @@ addons:
     - rpm
     - snapd
 env:
-  - PATH=/snap/bin:$PATH
+  - PATH=/snap/bin:$PATH GO111MODULE=on
 install:
   - make setup
   - sudo snap install snapcraft --classic
