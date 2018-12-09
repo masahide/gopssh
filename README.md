@@ -10,8 +10,9 @@ parallel ssh client
 # Usage
 
 ```bash
-$ ./gopssh
 Usage of ./gopssh:
+  -a int
+    	Max ssh agent unix socket connections (default 100)
   -c	colorized outputs (default true)
   -ciphers string
     	allowed cipher algorithms (default "arcfour256,aes128-gcm@openssh.com,chacha20-poly1305@openssh.com,aes128-ctr,aes192-ctr,aes256-ctr")
@@ -68,6 +69,3 @@ install via [brew](https://brew.sh):
 brew tap masahide/gopssh https://github.com/masahide/gopssh
 brew install gopssh
 ```
-
-
-
