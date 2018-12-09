@@ -19,6 +19,7 @@ const (
 	defaultIdentityFiles = "~/.ssh/id_dsa,~/.ssh/id_ecdsa,~/.ssh/id_ed25519,~/.ssh/id_rsa"
 )
 
+// nolint: gochecknoglobals
 var (
 	// Version is version number
 	Version = "dev"

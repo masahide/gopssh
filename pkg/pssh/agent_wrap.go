@@ -76,7 +76,6 @@ func (cp *connPools) dialSocket(socket string) (net.Conn, error) {
 }
 
 type agentClient struct {
-	conn net.Conn
 	*connPools
 
 	signers []ssh.Signer
@@ -144,9 +143,9 @@ func (c *agentClient) Signers() ([]ssh.Signer, error) {
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	var result []ssh.Signer
-	for _, k := range keys {
-		result = append(result, &agentKeyringSigner{c, k})
+	result := make([]ssh.Signer, len(keys))
+	for i, k := range keys {
+		result[i] = &agentKeyringSigner{c, k}
 	}
 	c.signers = result
 	return result, nil

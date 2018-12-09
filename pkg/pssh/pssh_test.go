@@ -260,9 +260,14 @@ func TestPsshRun(t *testing.T) {
 func TestSshKeyAgentCallback(t *testing.T) {
 	p := &Pssh{Config: &Config{ColorMode: true}}
 	p.Init()
-	p.netDialer = mockNetDial{}
 	p.SSHAuthSocket = "/dev/null"
+	p.conns = nil
 	f := p.sshKeyAgentCallback()
+	if f != nil {
+		t.Error("f!=nil")
+	}
+	p.conns = newConnPools(p.SSHAuthSocket, p.MaxAgentConns)
+	f = p.sshKeyAgentCallback()
 	if f == nil {
 		t.Error("f==nil")
 	}
@@ -285,7 +290,6 @@ func TestGetIdentFilesAuthMethods(t *testing.T) {
 func TestMergeAuthMethods(t *testing.T) {
 	p := &Pssh{Config: &Config{ColorMode: true}}
 	p.Init()
-	p.netDialer = mockNetDial{}
 	p.IdentityFileOnly = false
 	identMethods := p.getIdentFileAuthMethods([][]byte{testdata.PEMBytes["dsa"]})
 	f := p.mergeAuthMethods(identMethods)

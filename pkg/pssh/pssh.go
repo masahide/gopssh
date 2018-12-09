@@ -96,7 +96,6 @@ type Pssh struct {
 	stdoutPool           sync.Pool
 	stderrPool           sync.Pool
 	//netDial              func(network, address string) (net.Conn, error)
-	netDialer     dialIface
 	sshDialer     sshDialIface
 	conInstances  chan conInstance
 	cws           []*conWork
@@ -176,6 +175,7 @@ func (p *Pssh) delReslt(r *result) {
 	p.stderrPool.Put(r.stderr)
 }
 
+// nolint:gochecknoglobals
 var re = regexp.MustCompile(":.+")
 
 func readHosts(fileName string) ([]string, error) {
@@ -189,7 +189,7 @@ func readHosts(fileName string) ([]string, error) {
 	for i := range lines {
 		res[i] = string(lines[i])
 		if !re.MatchString(res[i]) {
-			res[i] = res[i] + ":22"
+			res[i] += ":22"
 		}
 
 	}
@@ -253,8 +253,8 @@ func (p *Pssh) Run() int {
 	}
 	go p.runConWorkers(ctx)
 	go func() {
-		if err := p.getConInstanceErrs(); err != nil {
-			log.Print(err)
+		if ierr := p.getConInstanceErrs(); ierr != nil {
+			log.Print(ierr)
 			cancel()
 		}
 	}()
