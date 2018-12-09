@@ -27,6 +27,7 @@ type mockNetDial struct{}
 
 func (n mockNetDial) Dial(network, address string) (net.Conn, error) { return &conMock{}, nil }
 
+/*
 type conSSHMock struct {
 }
 
@@ -34,7 +35,6 @@ func (c *conSSHMock) SendRequest(name string, wantReply bool, payload []byte) (b
 	return true, nil, nil
 }
 
-/*
 func (c *conSSHMock) OpenChannel(name string, data []byte) (ssh.Channel, <-chan *ssh.Request, error) {
 	return nil, nil, nil
 }
