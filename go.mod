@@ -7,6 +7,6 @@ require (
 	github.com/mattn/go-isatty v0.0.4
 	github.com/pkg/errors v0.8.0
 	golang.org/x/crypto v0.0.0-20181203042331-505ab145d0a9
-	golang.org/x/net v0.0.0-20181201002055-351d144fa1fc
-	golang.org/x/sys v0.0.0-20181206074257-70b957f3b65e
+	golang.org/x/net v0.0.0-20181207154023-610586996380
+	golang.org/x/sys v0.0.0-20181208175041-ad97f365e150
 )
