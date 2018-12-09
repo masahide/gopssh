@@ -23,10 +23,6 @@ func (c *conMock) SetDeadline(t time.Time) error      { return nil }
 func (c *conMock) SetWriteDeadline(t time.Time) error { return nil }
 func (c *conMock) SetReadDeadline(t time.Time) error  { return nil }
 
-type mockNetDial struct{}
-
-func (n mockNetDial) Dial(network, address string) (net.Conn, error) { return &conMock{}, nil }
-
 type conSSHMock struct {
 }
 
@@ -79,7 +75,7 @@ func TestConWorker(t *testing.T) {
 		p := &Pssh{Config: &Config{ColorMode: true}}
 		p.Concurrency = 1
 		p.Init()
-		p.netDialer = mockNetDial{}
+		//p.netDialer = mockNetDial{}
 		p.sshDialer = mockSSHDial{err: test.err}
 		c := &conWork{
 			Pssh:         p,

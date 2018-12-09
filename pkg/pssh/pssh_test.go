@@ -257,22 +257,17 @@ func TestPsshRun(t *testing.T) {
 	}
 }
 
-func TestDialSocket(t *testing.T) {
-	p := &Pssh{Config: &Config{ColorMode: true}}
-	p.Init()
-	p.netDialer = mockNetDial{}
-	var authConn net.Conn
-	err := p.dialSocket(&authConn, "")
-	if err != nil {
-		t.Error(err)
-	}
-}
 func TestSshKeyAgentCallback(t *testing.T) {
 	p := &Pssh{Config: &Config{ColorMode: true}}
 	p.Init()
-	p.netDialer = mockNetDial{}
 	p.SSHAuthSocket = "/dev/null"
+	p.conns = nil
 	f := p.sshKeyAgentCallback()
+	if f != nil {
+		t.Error("f!=nil")
+	}
+	p.conns = newConnPools(p.SSHAuthSocket, p.MaxAgentConns)
+	f = p.sshKeyAgentCallback()
 	if f == nil {
 		t.Error("f==nil")
 	}
@@ -295,25 +290,17 @@ func TestGetIdentFilesAuthMethods(t *testing.T) {
 func TestMergeAuthMethods(t *testing.T) {
 	p := &Pssh{Config: &Config{ColorMode: true}}
 	p.Init()
-	p.netDialer = mockNetDial{}
 	p.IdentityFileOnly = false
 	identMethods := p.getIdentFileAuthMethods([][]byte{testdata.PEMBytes["dsa"]})
-	k, f := p.mergeAuthMethods(identMethods)
+	f := p.mergeAuthMethods(identMethods)
 	if len(f) != 1 {
 		t.Errorf("len(f)==%d,want=1", len(f))
 	}
-	if k != nil {
-		t.Error("k!=nil")
-	}
 	p.IdentityFileOnly = true
-	k, f = p.mergeAuthMethods([]ssh.AuthMethod{})
+	f = p.mergeAuthMethods([]ssh.AuthMethod{})
 	if len(f) != 0 {
 		t.Errorf("len(f)==%d,want=0", len(f))
 	}
-	if k != nil {
-		t.Error("k!=nil")
-	}
-
 }
 
 func TestNewConWork(t *testing.T) {

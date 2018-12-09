@@ -19,6 +19,7 @@ const (
 	defaultIdentityFiles = "~/.ssh/id_dsa,~/.ssh/id_ecdsa,~/.ssh/id_ed25519,~/.ssh/id_rsa"
 )
 
+// nolint: gochecknoglobals
 var (
 	// Version is version number
 	Version = "dev"
@@ -34,6 +35,7 @@ func newConfig() *pssh.Config {
 	identityFiles := defaultIdentityFiles
 	c := pssh.Config{
 		Concurrency:   0,
+		MaxAgentConns: 100,
 		User:          os.Getenv("USER"),
 		Hostsfile:     "",
 		ShowHostName:  false,
@@ -44,6 +46,7 @@ func newConfig() *pssh.Config {
 		SSHAuthSocket: os.Getenv("SSH_AUTH_SOCK"),
 	}
 	flag.IntVar(&c.Concurrency, "p", c.Concurrency, "concurrency (defalut \"0\" is unlimit)")
+	flag.IntVar(&c.MaxAgentConns, "a", c.MaxAgentConns, "Max ssh agent unix socket connections")
 	flag.StringVar(&c.User, "u", c.User, "username")
 	flag.StringVar(&c.Hostsfile, "h", c.Hostsfile, "host file")
 	flag.BoolVar(&c.ShowHostName, "d", c.ShowHostName, "show hostname")
