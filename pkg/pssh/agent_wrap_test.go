@@ -244,3 +244,36 @@ func TestSignWithFlags(t *testing.T) {
         t.Errorf("sig=%q",sig)
     }
 }
+
+func TestAdd(t *testing.T) {
+	cp := newConnPools("", 1)
+	cp.netDialer = mockNetDial{}
+    cp.connPool = sync.Pool{New: func() interface{} {
+		var ka keyAgent
+		ka.ExtendedAgent = newMoockAgentClient(cp)
+		return &ka
+    }}
+    ac := newAgentClient(cp)
+    err := ac.Add(agent.AddedKey{})
+	if err == nil {
+		t.Error("err==nil")
+	}
+}
+
+func TestSigners(t *testing.T) {
+	cp := newConnPools("", 1)
+	cp.netDialer = mockNetDial{}
+    cp.connPool = sync.Pool{New: func() interface{} {
+		var ka keyAgent
+		ka.ExtendedAgent = newMoockAgentClient(cp)
+		return &ka
+    }}
+    ac := newAgentClient(cp)
+    list,err := ac.Signers()
+	if err != nil {
+		t.Error(err)
+	}
+    if len(list)!=0{
+        t.Errorf("list:%q",list)
+    }
+}
