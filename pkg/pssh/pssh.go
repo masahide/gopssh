@@ -16,11 +16,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/cenkalti/backoff"
 	"github.com/fatih/color"
 	"github.com/pkg/errors"
 	"golang.org/x/crypto/ssh"
-	"golang.org/x/crypto/ssh/agent"
 	"golang.org/x/crypto/ssh/knownhosts"
 )
 
@@ -70,13 +68,6 @@ func (p *print) Printf(format string, a ...interface{}) (n int, err error) {
 	return fmt.Fprintf(p.output, format, a...)
 }
 
-type dialIface interface {
-	Dial(network, address string) (net.Conn, error)
-}
-type netDial struct{}
-
-func (n netDial) Dial(network, address string) (net.Conn, error) { return net.Dial(network, address) }
-
 type sshDialIface interface {
 	Dial(network, addr string, config *ssh.ClientConfig) (sshClientIface, error)
 }
@@ -111,11 +102,13 @@ type Pssh struct {
 	cws           []*conWork
 	clientConf    ssh.ClientConfig
 	identFileData [][]byte
+	conns         *connPools
 }
 
 // Config pssh config
 type Config struct {
 	Concurrency      int
+	MaxAgentConns    int
 	User             string
 	Hostsfile        string
 	ShowHostName     bool
@@ -143,7 +136,6 @@ func (p *Pssh) Init() {
 	p.print = newPrint(os.Stdout, p.ColorMode)
 	p.stdoutPool = sync.Pool{New: newBytesBuf}
 	p.stderrPool = sync.Pool{New: newBytesBuf}
-	p.netDialer = netDial{}
 	p.sshDialer = sshDial{}
 	p.identFileData = p.readIdentFiles()
 }
@@ -222,6 +214,12 @@ func (p *Pssh) newConWork(id int, host string) *conWork {
 	c.startSession = c.startSessionWorker
 	return c
 }
+func (p *Pssh) setConnPool() {
+	if len(p.SSHAuthSocket) == 0 {
+		return
+	}
+	p.conns = newConnPools(p.SSHAuthSocket, p.MaxAgentConns)
+}
 
 // Run main task
 func (p *Pssh) Run() int {
@@ -237,6 +235,7 @@ func (p *Pssh) Run() int {
 		log.Printf("read hosts file err: %s", err)
 		return 1
 	}
+	p.setConnPool()
 	p.clientConf = ssh.ClientConfig{
 		User: p.User,
 		//Auth:            p.getAuthMethods(),
@@ -398,53 +397,22 @@ func readStream(ctx context.Context, out io.Writer, r io.Reader, errCh chan<- er
 	}
 }
 
-func (p *Pssh) dialSocket(authConn *net.Conn, socket string) error {
-	// https://stackoverflow.com/questions/30228482/golang-unix-socket-error-dial-resource-temporarily-unavailable
-	return backoff.Retry(func() error {
-		var err error
-		*authConn, err = p.netDialer.Dial("unix", socket)
-		if err != nil {
-			if terr, ok := err.(TemporaryError); ok && terr.Temporary() {
-				return err
-			}
-		}
-		return nil
-	}, backoff.NewExponentialBackOff())
-}
-
-type sshKeyAgent struct {
-	ssh.AuthMethod
-	authConn net.Conn
-}
-
-func (s *sshKeyAgent) close() error {
-	return s.authConn.Close()
-}
-
-func (p *Pssh) sshKeyAgentCallback() *sshKeyAgent {
-	if len(p.SSHAuthSocket) == 0 {
+func (p *Pssh) sshKeyAgentCallback() ssh.AuthMethod {
+	if p.conns == nil {
 		return nil
 	}
-	res := sshKeyAgent{}
-	if err := p.dialSocket(&res.authConn, p.SSHAuthSocket); err != nil {
-		// log.Fatalf("net.Dial: %v", err)
-		return nil
-	}
-	// nolint: errcheck
-	agentClient := agent.NewClient(res.authConn)
-	res.AuthMethod = ssh.PublicKeysCallback(agentClient.Signers)
-	return &res
+	agentClient := newAgentClient(p.conns)
+	return ssh.PublicKeysCallback(agentClient.Signers)
 }
 
-func (p *Pssh) mergeAuthMethods(identMethods []ssh.AuthMethod) (*sshKeyAgent, []ssh.AuthMethod) {
+func (p *Pssh) mergeAuthMethods(identMethods []ssh.AuthMethod) []ssh.AuthMethod {
 	res := make([]ssh.AuthMethod, 0, len(identMethods)+1)
-	var keyAgentMehod *sshKeyAgent
 	if !p.IdentityFileOnly {
-		if keyAgentMehod = p.sshKeyAgentCallback(); keyAgentMehod != nil {
+		if keyAgentMehod := p.sshKeyAgentCallback(); keyAgentMehod != nil {
 			res = append(res, keyAgentMehod)
 		}
 	}
-	return keyAgentMehod, append(res, identMethods...)
+	return append(res, identMethods...)
 }
 
 func (p *Pssh) getIdentFileAuthMethods(identFileData [][]byte) []ssh.AuthMethod {
