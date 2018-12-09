@@ -70,11 +70,9 @@ type mockAgentClient struct {
 	signers []ssh.Signer
 }
 
-/*
 func newMoockAgentClient(cp *connPools) agent.ExtendedAgent {
 	return &mockAgentClient{connPools: cp}
 }
-*/
 
 func (c *mockAgentClient) RemoveAll() error {
 	return errors.New("not implemented mockAgentClient RemoveAll")
@@ -156,7 +154,6 @@ func TestNewAgentClient(t *testing.T) {
 func TestRemoveAll(t *testing.T) {
 	cp := newConnPools("", 1)
 	cp.netDialer = mockNetDial{}
-	cp.connPool = sync.Pool{New: func() interface{} { return &mockAgentClient{} }}
 	ac := newAgentClient(cp)
 	err := ac.RemoveAll()
 	if err == nil {
@@ -167,7 +164,6 @@ func TestRemoveAll(t *testing.T) {
 func TestRemove(t *testing.T) {
 	cp := newConnPools("", 1)
 	cp.netDialer = mockNetDial{}
-	cp.connPool = sync.Pool{New: func() interface{} { return &mockAgentClient{} }}
 	ac := newAgentClient(cp)
 	err := ac.Remove(testPublicKeys["rsa"])
 	if err == nil {
@@ -177,7 +173,6 @@ func TestRemove(t *testing.T) {
 func TestLock(t *testing.T) {
 	cp := newConnPools("", 1)
 	cp.netDialer = mockNetDial{}
-	cp.connPool = sync.Pool{New: func() interface{} { return &mockAgentClient{} }}
 	ac := newAgentClient(cp)
 	err := ac.Lock([]byte{})
 	if err == nil {
@@ -188,10 +183,64 @@ func TestLock(t *testing.T) {
 func TestUnlock(t *testing.T) {
 	cp := newConnPools("", 1)
 	cp.netDialer = mockNetDial{}
-	cp.connPool = sync.Pool{New: func() interface{} { return &mockAgentClient{} }}
 	ac := newAgentClient(cp)
 	err := ac.Unlock([]byte{})
 	if err == nil {
 		t.Error("err==nil")
 	}
+}
+
+func TestList(t *testing.T) {
+	cp := newConnPools("", 1)
+	cp.netDialer = mockNetDial{}
+    cp.connPool = sync.Pool{New: func() interface{} {
+		var ka keyAgent
+		ka.ExtendedAgent = newMoockAgentClient(cp)
+		return &ka
+    }}
+    ac := newAgentClient(cp)
+    list,err := ac.List()
+	if err != nil {
+		t.Error("err!=nil")
+	}
+    if len(list) != 0{
+        t.Errorf("list=%q",list)
+    }
+}
+
+func TestSign(t *testing.T) {
+	cp := newConnPools("", 1)
+	cp.netDialer = mockNetDial{}
+    cp.connPool = sync.Pool{New: func() interface{} {
+		var ka keyAgent
+		ka.ExtendedAgent = newMoockAgentClient(cp)
+		return &ka
+    }}
+    ac := newAgentClient(cp)
+    sig,err := ac.Sign(testPublicKeys["rsa"],[]byte{})
+	if err != nil {
+		t.Error("err!=nil")
+	}
+    if sig != nil{
+        t.Errorf("sig=%q",sig)
+    }
+}
+
+
+func TestSignWithFlags(t *testing.T) {
+	cp := newConnPools("", 1)
+	cp.netDialer = mockNetDial{}
+    cp.connPool = sync.Pool{New: func() interface{} {
+		var ka keyAgent
+		ka.ExtendedAgent = newMoockAgentClient(cp)
+		return &ka
+    }}
+    ac := newAgentClient(cp)
+    sig,err := ac.SignWithFlags(testPublicKeys["rsa"],[]byte{},agent.SignatureFlagReserved)
+	if err != nil {
+		t.Error("err!=nil")
+	}
+    if sig != nil{
+        t.Errorf("sig=%q",sig)
+    }
 }
