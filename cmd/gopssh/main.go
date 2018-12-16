@@ -21,10 +21,9 @@ const (
 
 // nolint: gochecknoglobals
 var (
-	// Version is version number
-	Version = "dev"
-	// Date is build date
-	Date    = ""
+	version = "dev"
+	commit  = "none"
+	date    = "unknown"
 	showVer = flag.Bool("version", false, "Show version")
 )
 
@@ -76,7 +75,7 @@ func checkFlag(w io.Writer) (ret int, exit bool) {
 	flag.CommandLine.SetOutput(w)
 	if *showVer {
 		// nolint: errcheck
-		fmt.Fprintf(w, "version: %s %s\n", Version, Date)
+		fmt.Fprintf(w, "%v, commit %v, built at %v\n", version, commit, date)
 		return 0, true
 	}
 	if flag.NArg() == 0 {
