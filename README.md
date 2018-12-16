@@ -12,7 +12,7 @@ parallel ssh client
 ```bash
 Usage of ./gopssh:
   -a int
-    	Max ssh agent unix socket connections (default 100)
+    	Max ssh agent unix socket connections (default 50)
   -c	colorized outputs (default true)
   -ciphers string
     	allowed cipher algorithms (default "arcfour256,aes128-gcm@openssh.com,chacha20-poly1305@openssh.com,aes128-ctr,aes192-ctr,aes256-ctr")
@@ -30,10 +30,11 @@ Usage of ./gopssh:
     	allowed MAC algorithms (default "hmac-sha1-96,hmac-sha1,hmac-sha2-256,hmac-sha2-256-etm@openssh.com")
   -p int
     	concurrency (defalut "0" is unlimit)
+  -s	sort the results and output (default true)
   -timeout duration
-    	maximum amount of time for the TCP connection to establish. (default 5s)
+    	maximum amount of time for the TCP connection to establish. (default 15s)
   -u string
-    	username (default "username")
+    	username (default "$USER")
   -version
     	Show version
 ```
