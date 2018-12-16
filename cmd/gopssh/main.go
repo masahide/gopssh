@@ -35,7 +35,7 @@ func newConfig() *pssh.Config {
 	identityFiles := defaultIdentityFiles
 	c := pssh.Config{
 		Concurrency:   0,
-		MaxAgentConns: 100,
+		MaxAgentConns: 50,
 		User:          os.Getenv("USER"),
 		Hostsfile:     "",
 		ShowHostName:  false,
@@ -43,7 +43,7 @@ func newConfig() *pssh.Config {
 		IgnoreHostKey: false,
 		Debug:         false,
 		SortPrint:     true,
-		Timeout:       5 * time.Second,
+		Timeout:       15 * time.Second,
 		SSHAuthSocket: os.Getenv("SSH_AUTH_SOCK"),
 	}
 	flag.IntVar(&c.Concurrency, "p", c.Concurrency, "concurrency (defalut \"0\" is unlimit)")
