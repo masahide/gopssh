@@ -28,7 +28,7 @@ func TestNewConfig(t *testing.T) {
 	if c.Debug {
 		t.Error("c.Debug !=false")
 	}
-	if c.Timeout != 5*time.Second {
+	if c.Timeout != 15*time.Second {
 		t.Error("c.Timeout != 5*time.Second")
 	}
 }
