@@ -42,6 +42,7 @@ func newConfig() *pssh.Config {
 		ColorMode:     true,
 		IgnoreHostKey: false,
 		Debug:         false,
+		SortPrint:     true,
 		Timeout:       5 * time.Second,
 		SSHAuthSocket: os.Getenv("SSH_AUTH_SOCK"),
 	}
@@ -49,6 +50,7 @@ func newConfig() *pssh.Config {
 	flag.IntVar(&c.MaxAgentConns, "a", c.MaxAgentConns, "Max ssh agent unix socket connections")
 	flag.StringVar(&c.User, "u", c.User, "username")
 	flag.StringVar(&c.Hostsfile, "h", c.Hostsfile, "host file")
+	flag.BoolVar(&c.SortPrint, "s", c.SortPrint, "sort the results and output")
 	flag.BoolVar(&c.ShowHostName, "d", c.ShowHostName, "show hostname")
 	flag.BoolVar(&c.ColorMode, "c", c.ColorMode, "colorized outputs")
 	flag.BoolVar(&c.IgnoreHostKey, "k", c.IgnoreHostKey, "Do not check the host key")

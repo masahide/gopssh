@@ -116,6 +116,7 @@ type Config struct {
 	Debug            bool
 	StdinFlag        bool
 	IdentityFileOnly bool
+	SortPrint        bool
 	Timeout          time.Duration
 	KexFlag          string
 	SSHAuthSocket    string
@@ -274,7 +275,7 @@ func (p *Pssh) Run() int {
 	for i := range p.cws {
 		p.cws[i].command <- in
 	}
-	p.printResults(ctx, results, p.cws)
+	p.outputFunc()(ctx, results, p.cws)
 	cancel()
 
 	return 0
@@ -301,32 +302,32 @@ func (p *Pssh) getConInstanceErrs() error {
 	return nil
 }
 
-/*
-func printSortResults(ctx context.Context, results chan *result, cws []*conWork) {
+func (p *Pssh) printSortResults(ctx context.Context, results chan *result, cws []*conWork) {
 	resSlise := make([]*result, len(cws))
 	cur := 0
-L1:
 	for i := 0; i < len(cws); i++ {
 		select {
 		case res := <-results:
-		L2:
-			for i = cur;i<=res.conID;i++ {
-				cws[i] == nil{
-					break L2
-				}
-			}
-			if res.conID == cur {
-				printResult(res, cws[res.conID].host)
-				delReslt(res)
-				cur++
-				continue L1
-			}
 			resSlise[res.conID] = res
+		L1:
+			for j := cur; j < len(cws); j++ {
+				if resSlise[j] == nil {
+					break L1
+				}
+				p.printResult(resSlise[j], cws[resSlise[j].conID].host)
+				cur = j + 1
+			}
 		case <-ctx.Done():
 		}
 	}
 }
-*/
+
+func (p *Pssh) outputFunc() func(ctx context.Context, results chan *result, cws []*conWork) {
+	if p.SortPrint {
+		return p.printSortResults
+	}
+	return p.printResults
+}
 
 func (p *Pssh) printResults(ctx context.Context, results chan *result, cws []*conWork) {
 	for i := 0; i < len(cws); i++ {
@@ -348,7 +349,7 @@ func (p *Pssh) printResult(res *result, host string) {
 			c = p.green
 		}
 		// nolint: errcheck,gosec
-		c.Printf("%s  reslut code %d\n", host, res.code)
+		c.Printf("%s  result code %d\n", host, res.code)
 	}
 	if res.err != nil {
 		// nolint: errcheck,gosec
