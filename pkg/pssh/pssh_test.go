@@ -7,6 +7,7 @@ import (
 	"log"
 	"net"
 	"os"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -233,8 +234,96 @@ func TestPrintResults(t *testing.T) {
 		}
 	}()
 	p.printResults(ctx, results, cws)
-	if !strings.HasPrefix(mock.buf.String(), "  reslut code 0") {
-		t.Errorf("buf=%s, want:'  reslut code 0'", mock.buf.String())
+	if !strings.HasPrefix(mock.buf.String(), "  result code 0") {
+		t.Errorf("buf=%s, want:'  result code 0'", mock.buf.String())
+	}
+}
+
+type idHost struct {
+	id   int
+	host string
+}
+
+func TestPrintSortResults(t *testing.T) {
+	var tests = []struct {
+		id   int
+		ins  []idHost
+		want string
+	}{
+		{id: 1, ins: []idHost{{0, "host0"}, {3, "host3"}, {1, "host1"}, {4, "host4"}, {2, "host2"}},
+			want: `host0  result code 0
+host1  result code 0
+host2  result code 0
+host3  result code 0
+host4  result code 0
+`,
+		},
+		{id: 2, ins: []idHost{{0, "host0"}, {1, "host1"}},
+			want: `host0  result code 0
+host1  result code 0
+`,
+		},
+		{id: 3, ins: []idHost{{5, "host5"}, {3, "host3"}, {1, "host1"}, {4, "host4"}, {2, "host2"}, {0, "host0"}},
+			want: `host0  result code 0
+host1  result code 0
+host2  result code 0
+host3  result code 0
+host4  result code 0
+host5  result code 0
+`,
+		},
+		{id: 4, ins: []idHost{{0, "host0"}, {1, "host1"}, {2, "host2"}, {3, "host3"}, {4, "host4"}, {5, "host5"}},
+			want: `host0  result code 0
+host1  result code 0
+host2  result code 0
+host3  result code 0
+host4  result code 0
+host5  result code 0
+`,
+		},
+	}
+	for id, tc := range tests {
+		p := &Pssh{
+			Config: &Config{
+				ShowHostName: true,
+			},
+		}
+		p.print = newPrint(os.Stdout, false)
+		p.conInstances = make(chan conInstance, len(tc.ins))
+		for _, c := range tc.ins {
+			p.conInstances <- conInstance{
+				err:     errors.New("hoge"),
+				conWork: &conWork{id: c.id, host: c.host},
+			}
+		}
+		mock := mockPrin{}
+		p.red = &mock
+		p.boldRed = &mock
+		p.green = &mock
+		results := make(chan *result)
+		cws := make([]*conWork, len(tc.ins))
+		for _, c := range tc.ins {
+			cws[c.id] = &conWork{
+				id:   c.id,
+				host: c.host,
+			}
+			//log.Printf("%v", *cws[i])
+		}
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		go func() {
+			for _, c := range tc.ins {
+				results <- &result{
+					conID:  c.id,
+					stdout: &bytes.Buffer{},
+					stderr: &bytes.Buffer{},
+				}
+			}
+		}()
+		p.printSortResults(ctx, results, cws)
+		if mock.buf.String() != tc.want {
+			t.Errorf("id=%d buf=%s, want:'%s'", id, mock.buf.String(), tc.want)
+		}
 	}
 }
 
@@ -345,6 +434,23 @@ func TestReadIdentFiles(t *testing.T) {
 			if !bytes.Equal(res[0], test.want[0]) {
 				t.Errorf("res:%v,want:%v", res, test.want)
 			}
+		}
+	}
+}
+
+func TestOutputFunc(t *testing.T) {
+	p := &Pssh{Config: &Config{}}
+	var tests = []struct {
+		flag bool
+		want func(ctx context.Context, results chan *result, cws []*conWork)
+	}{
+		{true, p.printSortResults},
+		{false, p.printResults},
+	}
+	for _, test := range tests {
+		p.SortPrint = test.flag
+		if reflect.ValueOf(p.outputFunc()).Pointer() != reflect.ValueOf(test.want).Pointer() {
+			t.Error("outputFunc != test.want")
 		}
 	}
 }
