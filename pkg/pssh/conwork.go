@@ -45,7 +45,7 @@ func (c *conWork) conWorker(ctx context.Context, config ssh.ClientConfig, instan
 	}
 	// nolint: errcheck
 	defer conn.Close()
-	c.commandLoop(ctx, conn, true)
+	c.commandLoop(ctx, conn, false)
 }
 
 func (c *conWork) commandLoop(ctx context.Context, conn sshClientIface, loop bool) {
