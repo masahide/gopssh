@@ -51,13 +51,13 @@ example:
 For RHEL/CentOS:
 
 ```bash
-sudo yum install https://github.com/masahide/gopssh/releases/download/v0.5.2/gopssh_amd64.rpm
+sudo yum install https://github.com/masahide/gopssh/releases/download/v0.5.3/gopssh_amd64.rpm
 ```
 
 For Ubuntu/Debian:
 
 ```bash
-wget -qO /tmp/gopssh_amd64.deb https://github.com/masahide/gopssh/releases/download/v0.5.2/gopssh_amd64.deb
+wget -qO /tmp/gopssh_amd64.deb https://github.com/masahide/gopssh/releases/download/v0.5.3/gopssh_amd64.deb
 sudo dpkg -i /tmp/gopssh_amd64.deb
 ```
 
