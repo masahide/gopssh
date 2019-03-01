@@ -28,6 +28,7 @@ vendor
 coverage.txt
 *coverage.txt
 cover.html
+cover.out
 
 dist/
 bin/

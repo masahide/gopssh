@@ -56,9 +56,9 @@ func (p *print) init() {
 		p.green = color.New(color.FgGreen)
 		return
 	}
-	p.red = &print{}
-	p.boldRed = &print{}
-	p.green = &print{}
+	p.red = p
+	p.boldRed = p
+	p.green = p
 }
 
 func (p *print) Print(a ...interface{}) (n int, err error) {
