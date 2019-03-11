@@ -205,74 +205,102 @@ func (p *mockPrin) Printf(format string, a ...interface{}) (n int, err error) {
 }
 
 func TestPrintResults(t *testing.T) {
-	p := &Pssh{
-		Config: &Config{
-			ShowHostName: true,
+	var tests = []struct {
+		id       int
+		ins      []idHost
+		want     string
+		wantCode int
+	}{
+		{id: 0, ins: []idHost{{0, "host0", 0}, {3, "host3", 0}, {1, "host1", 0}, {4, "host4", 0}, {2, "host2", 0}},
+			want:     `host0  result code 0`,
+			wantCode: 0,
+		},
+		{id: 0, ins: []idHost{{0, "host0", 1}, {3, "host3", 0}, {1, "host1", 0}, {4, "host4", 0}, {2, "host2", 0}},
+			want:     `host0  result code 1`,
+			wantCode: 1,
+		},
+		{id: 0, ins: []idHost{{0, "host0", 0}, {3, "host3", 0}, {1, "host1", 0}, {4, "host4", 4}, {2, "host2", 0}},
+			want:     `host4  result code 4`,
+			wantCode: 4,
 		},
 	}
-	p.print = newPrint(os.Stdout, false)
-	p.conInstances = make(chan conInstance, 1)
-	p.conInstances <- conInstance{
-		err:     errors.New("hoge"),
-		conWork: &conWork{host: "host1"},
-	}
-	mock := mockPrin{}
-	p.red = &mock
-	p.boldRed = &mock
-	p.green = &mock
-	results := make(chan *result)
-	cws := []*conWork{
-		{},
-	}
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	go func() {
-		results <- &result{
-			conID:  0,
-			stdout: &bytes.Buffer{},
-			stderr: &bytes.Buffer{},
+	for id, tc := range tests {
+		p := &Pssh{
+			Config: &Config{
+				ShowHostName: true,
+			},
 		}
-	}()
-	p.printResults(ctx, results, cws)
-	if !strings.HasPrefix(mock.buf.String(), "  result code 0") {
-		t.Errorf("buf=%s, want:'  result code 0'", mock.buf.String())
+		p.print = newPrint(os.Stdout, false)
+		p.conInstances = make(chan conInstance, len(tc.ins))
+		for _, c := range tc.ins {
+			p.conInstances <- conInstance{
+				err:     errors.New("hoge"),
+				conWork: &conWork{id: c.id, host: c.host},
+			}
+		}
+		mock := mockPrin{}
+		p.red = &mock
+		p.boldRed = &mock
+		p.green = &mock
+		results := make(chan *result)
+		cws := make([]*conWork, len(tc.ins))
+		for _, c := range tc.ins {
+			cws[c.id] = &conWork{
+				id: c.id, host: c.host,
+			}
+			//log.Printf("%v", *cws[i])
+		}
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		go func() {
+			for _, c := range tc.ins {
+				results <- &result{
+					conID:  c.id,
+					code:   c.code,
+					stdout: &bytes.Buffer{},
+					stderr: &bytes.Buffer{},
+				}
+			}
+		}()
+		code := p.printResults(ctx, results, cws)
+		if !strings.Contains(mock.buf.String(), tc.want) {
+			t.Errorf("id=%d buf=%s, want:'%s'", id, mock.buf.String(), tc.want)
+		}
+		if code != tc.wantCode {
+			t.Errorf("id=%d code=%d, want:'%d'", id, code, tc.wantCode)
+		}
 	}
 }
 
 type idHost struct {
 	id   int
 	host string
+	code int
 }
 
 func TestPrintSortResults(t *testing.T) {
 	var tests = []struct {
-		id   int
-		ins  []idHost
-		want string
+		id       int
+		ins      []idHost
+		want     string
+		wantCode int
 	}{
-		{id: 1, ins: []idHost{{0, "host0"}, {3, "host3"}, {1, "host1"}, {4, "host4"}, {2, "host2"}},
+		{id: 0, ins: []idHost{{0, "host0", 0}, {3, "host3", 0}, {1, "host1", 0}, {4, "host4", 0}, {2, "host2", 0}},
 			want: `host0  result code 0
 host1  result code 0
 host2  result code 0
 host3  result code 0
 host4  result code 0
 `,
+			wantCode: 0,
 		},
-		{id: 2, ins: []idHost{{0, "host0"}, {1, "host1"}},
+		{id: 1, ins: []idHost{{0, "host0", 0}, {1, "host1", 0}},
 			want: `host0  result code 0
 host1  result code 0
 `,
+			wantCode: 0,
 		},
-		{id: 3, ins: []idHost{{5, "host5"}, {3, "host3"}, {1, "host1"}, {4, "host4"}, {2, "host2"}, {0, "host0"}},
-			want: `host0  result code 0
-host1  result code 0
-host2  result code 0
-host3  result code 0
-host4  result code 0
-host5  result code 0
-`,
-		},
-		{id: 4, ins: []idHost{{0, "host0"}, {1, "host1"}, {2, "host2"}, {3, "host3"}, {4, "host4"}, {5, "host5"}},
+		{id: 2, ins: []idHost{{5, "host5", 0}, {3, "host3", 0}, {1, "host1", 0}, {4, "host4", 0}, {2, "host2", 0}, {0, "host0", 0}},
 			want: `host0  result code 0
 host1  result code 0
 host2  result code 0
@@ -280,6 +308,47 @@ host3  result code 0
 host4  result code 0
 host5  result code 0
 `,
+			wantCode: 0,
+		},
+		{id: 3, ins: []idHost{{0, "host0", 0}, {1, "host1", 0}, {2, "host2", 0}, {3, "host3", 0}, {4, "host4", 0}, {5, "host5", 0}},
+			want: `host0  result code 0
+host1  result code 0
+host2  result code 0
+host3  result code 0
+host4  result code 0
+host5  result code 0
+`,
+			wantCode: 0,
+		},
+		{id: 4, ins: []idHost{{0, "host0", 0}, {1, "host1", 0}, {2, "host2", 0}, {3, "host3", 0}, {4, "host4", 0}, {5, "host5", 7}},
+			want: `host0  result code 0
+host1  result code 0
+host2  result code 0
+host3  result code 0
+host4  result code 0
+host5  result code 7
+`,
+			wantCode: 7,
+		},
+		{id: 5, ins: []idHost{{0, "host0", 2}, {1, "host1", 0}, {2, "host2", 0}, {3, "host3", 0}, {4, "host4", 0}, {5, "host5", 0}},
+			want: `host0  result code 2
+host1  result code 0
+host2  result code 0
+host3  result code 0
+host4  result code 0
+host5  result code 0
+`,
+			wantCode: 2,
+		},
+		{id: 6, ins: []idHost{{0, "host0", 0}, {1, "host1", 0}, {2, "host2", 0}, {3, "host3", 4}, {4, "host4", 3}, {5, "host5", 0}},
+			want: `host0  result code 0
+host1  result code 0
+host2  result code 0
+host3  result code 4
+host4  result code 3
+host5  result code 0
+`,
+			wantCode: 4,
 		},
 	}
 	for id, tc := range tests {
@@ -315,14 +384,18 @@ host5  result code 0
 			for _, c := range tc.ins {
 				results <- &result{
 					conID:  c.id,
+					code:   c.code,
 					stdout: &bytes.Buffer{},
 					stderr: &bytes.Buffer{},
 				}
 			}
 		}()
-		p.printSortResults(ctx, results, cws)
+		code := p.printSortResults(ctx, results, cws)
 		if mock.buf.String() != tc.want {
 			t.Errorf("id=%d buf=%s, want:'%s'", id, mock.buf.String(), tc.want)
+		}
+		if code != tc.wantCode {
+			t.Errorf("id=%d code=%d, want:'%d'", id, code, tc.wantCode)
 		}
 	}
 }
@@ -442,7 +515,7 @@ func TestOutputFunc(t *testing.T) {
 	p := &Pssh{Config: &Config{}}
 	var tests = []struct {
 		flag bool
-		want func(ctx context.Context, results chan *result, cws []*conWork)
+		want func(ctx context.Context, results chan *result, cws []*conWork) int
 	}{
 		{true, p.printSortResults},
 		{false, p.printResults},
