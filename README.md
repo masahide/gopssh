@@ -46,7 +46,5 @@ example:
 
 ## Installation
 
-### Linux
-
-see [releases page](./releases/).
+see [releases page](https://github.com/masahide/gopssh/releases).
 
