@@ -48,25 +48,5 @@ example:
 
 ### Linux
 
-For RHEL/CentOS:
+see [releases page](./releases/).
 
-```bash
-sudo yum install https://github.com/masahide/gopssh/releases/download/v0.5.3/gopssh_amd64.rpm
-```
-
-For Ubuntu/Debian:
-
-```bash
-wget -qO /tmp/gopssh_amd64.deb https://github.com/masahide/gopssh/releases/download/v0.5.3/gopssh_amd64.deb
-sudo dpkg -i /tmp/gopssh_amd64.deb
-```
-
-### macOS
-
-
-install via [brew](https://brew.sh):
-
-```bash
-brew tap masahide/gopssh https://github.com/masahide/gopssh
-brew install gopssh
-```
