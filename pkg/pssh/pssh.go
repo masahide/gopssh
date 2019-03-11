@@ -275,10 +275,10 @@ func (p *Pssh) Run() int {
 	for i := range p.cws {
 		p.cws[i].command <- in
 	}
-	p.outputFunc()(ctx, results, p.cws)
+	code := p.outputFunc()(ctx, results, p.cws)
 	cancel()
 
-	return 0
+	return code
 
 }
 
@@ -302,7 +302,8 @@ func (p *Pssh) getConInstanceErrs() error {
 	return nil
 }
 
-func (p *Pssh) printSortResults(ctx context.Context, results chan *result, cws []*conWork) {
+func (p *Pssh) printSortResults(ctx context.Context, results chan *result, cws []*conWork) int {
+	var firstCode int
 	resSlise := make([]*result, len(cws))
 	cur := 0
 	for i := 0; i < len(cws); i++ {
@@ -316,28 +317,39 @@ func (p *Pssh) printSortResults(ctx context.Context, results chan *result, cws [
 				}
 				p.printResult(resSlise[j], cws[resSlise[j].conID].host)
 				cur = j + 1
+				if firstCode == 0 && resSlise[j].code != 0 {
+					firstCode = resSlise[j].code
+				}
 			}
 		case <-ctx.Done():
+			firstCode = 1
 		}
 	}
+	return firstCode
 }
 
-func (p *Pssh) outputFunc() func(ctx context.Context, results chan *result, cws []*conWork) {
+func (p *Pssh) outputFunc() func(ctx context.Context, results chan *result, cws []*conWork) int {
 	if p.SortPrint {
 		return p.printSortResults
 	}
 	return p.printResults
 }
 
-func (p *Pssh) printResults(ctx context.Context, results chan *result, cws []*conWork) {
+func (p *Pssh) printResults(ctx context.Context, results chan *result, cws []*conWork) int {
+	var firstCode int
 	for i := 0; i < len(cws); i++ {
 		select {
 		case res := <-results:
 			p.printResult(res, cws[res.conID].host)
+			if firstCode == 0 && res.code != 0 {
+				firstCode = res.code
+			}
 			p.delReslt(res)
 		case <-ctx.Done():
+			firstCode = 1
 		}
 	}
+	return firstCode
 }
 
 func (p *Pssh) printResult(res *result, host string) {
