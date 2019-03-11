@@ -2,9 +2,9 @@
 class Gopssh < Formula
   desc "parallel ssh client"
   homepage "https://github.com/masahide/gopssh"
-  url "https://github.com/masahide/gopssh/releases/download/v0.5.3/gopssh_Darwin_x86_64.tar.gz"
-  version "0.5.3"
-  sha256 "dbd85db1be71adb5ae5f392a0688283a6397d46f5a0fc5a3d77856e3d673247e"
+  url "https://github.com/masahide/gopssh/releases/download/v0.5.4/gopssh_Darwin_x86_64.tar.gz"
+  version "0.5.4"
+  sha256 "a9ad765ebe8919bd429cb64fe35b79d21202b074559ffa824ee23a3972cff44d"
 
   def install
     bin.install "gopssh"
