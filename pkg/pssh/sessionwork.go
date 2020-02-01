@@ -41,6 +41,11 @@ func (s *sessionWork) result(ctx context.Context, err error, res *result) {
 	s.errResult(ctx, res)
 }
 
+type sessErr struct {
+	name string
+	err  error
+}
+
 func (s *sessionWork) run(ctx context.Context, res *result, session sess) {
 	// nolint: errcheck,gosec
 	defer session.Close()
@@ -53,23 +58,41 @@ func (s *sessionWork) run(ctx context.Context, res *result, session sess) {
 		return
 	}
 
-	errCh := make(chan error)
-	go readStream(ctx, res.stdout, stdout, errCh)
-	go readStream(ctx, res.stderr, stderr, errCh)
+	errChs := []chan error{make(chan error, 1), make(chan error, 1)}
+	errs := []sessErr{
+		{name: "stdoutStream err:", err: nil}, // 0
+		{name: "stderrStream err:", err: nil}, // 1
+		{name: "", err: nil},                  // 2
+		{name: "I/O err:", err: nil},          // 3
+	}
+	go readStream(ctx, res.stdout, stdout, errChs[0])
+	go readStream(ctx, res.stderr, stderr, errChs[1])
 	err = session.Run(s.command)
 	if err != nil {
 		if ee, ok := err.(*ssh.ExitError); ok {
-			res.err = errors.New(ee.Msg())
+			errs[2].err = ee
 			res.code = ee.ExitStatus()
-			s.errResult(ctx, res)
-			return
+		} else {
+			errs[3].err = err
 		}
-		res.err = fmt.Errorf("session Wait: %v", err)
-		s.errResult(ctx, res)
-		return
 	}
-	res.err = getFristErr(getErrs(ctx, errCh))
+	for i := 0; i < len(errChs); i++ {
+		errs[i].err = getErr(ctx, errChs[i])
+	}
+	res.err = getAllError(errs)
 	s.errResult(ctx, res)
+}
+func getAllError(errs []sessErr) error {
+	s := make([]string, 0, len(errs))
+	for _, e := range errs {
+		if e.err != nil {
+			s = append(s, e.name+e.err.Error())
+		}
+	}
+	if len(s) > 0 {
+		return errors.New(strings.Join(s, "\n"))
+	}
+	return nil
 }
 
 func (s *sessionWork) worker(ctx context.Context, conn client) {

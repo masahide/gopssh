@@ -17,6 +17,9 @@ const (
 	defaultMacsFlags    = "hmac-sha1-96,hmac-sha1,hmac-sha2-256,hmac-sha2-256-etm@openssh.com"
 	// https://man.openbsd.org/ssh_config#IdentityFile
 	defaultIdentityFiles = "~/.ssh/id_dsa,~/.ssh/id_ecdsa,~/.ssh/id_ed25519,~/.ssh/id_rsa"
+	defaultMaxAgent      = 50
+	defaultTimeout       = 15 * time.Second
+	paramErrCode         = 2
 )
 
 // nolint: gochecknoglobals
@@ -34,7 +37,7 @@ func newConfig() *pssh.Config {
 	identityFiles := defaultIdentityFiles
 	c := pssh.Config{
 		Concurrency:   0,
-		MaxAgentConns: 50,
+		MaxAgentConns: defaultMaxAgent,
 		User:          os.Getenv("USER"),
 		Hostsfile:     "",
 		ShowHostName:  false,
@@ -42,7 +45,7 @@ func newConfig() *pssh.Config {
 		IgnoreHostKey: false,
 		Debug:         false,
 		SortPrint:     true,
-		Timeout:       15 * time.Second,
+		Timeout:       defaultTimeout,
 		SSHAuthSocket: os.Getenv("SSH_AUTH_SOCK"),
 	}
 	flag.IntVar(&c.Concurrency, "p", c.Concurrency, "concurrency (defalut \"0\" is unlimit)")
@@ -82,7 +85,7 @@ func checkFlag(w io.Writer) (ret int, exit bool) {
 		flag.Usage()
 		// nolint: errcheck
 		fmt.Fprintf(w, "example:\n$ ./gopssh -h <(echo host1 host2) ls -la /etc/\n")
-		return 2, true
+		return paramErrCode, true
 	}
 	return 0, false
 }

@@ -7,7 +7,6 @@ OS=$(shell uname -s)
 PKG?=./pkg/pssh
 
 export PATH := ./bin:$(PATH)
-export GO111MODULE := on
 
 # Install all the build and lint dependencies
 setup:
@@ -34,7 +33,7 @@ cover: test
 
 # Run all the linters
 lint:
-	./bin/golangci-lint run --tests=false --enable-all --disable=lll ./...
+	./bin/golangci-lint run --tests=false --enable-all --disable=lll,wsl ./...
 	#gometalinter --enable=gofmt --deadline 3m --vendor ./...
 .PHONY: lint
 

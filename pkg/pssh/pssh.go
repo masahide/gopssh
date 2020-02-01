@@ -22,6 +22,10 @@ import (
 	"golang.org/x/crypto/ssh/knownhosts"
 )
 
+const (
+	one = 1
+)
+
 type prn interface {
 	Print(a ...interface{}) (n int, err error)
 	Printf(format string, a ...interface{}) (n int, err error)
@@ -192,7 +196,6 @@ func readHosts(fileName string) ([]string, error) {
 		if !re.MatchString(res[i]) {
 			res[i] += ":22"
 		}
-
 	}
 	return res, nil
 }
@@ -211,7 +214,7 @@ func getHostKeyCallback(insecure bool) (ssh.HostKeyCallback, error) {
 }
 
 func (p *Pssh) newConWork(id int, host string) *conWork {
-	c := &conWork{Pssh: p, id: id, host: host, command: make(chan input, 1)}
+	c := &conWork{Pssh: p, id: id, host: host, command: make(chan input, one)}
 	c.startSession = c.startSessionWorker
 	return c
 }
@@ -228,13 +231,13 @@ func (p *Pssh) Run() int {
 	if err != nil {
 		// nolint: errcheck,gosec
 		log.Printf("read hosts file err: %s", err)
-		return 1
+		return one
 	}
 	hc, err := getHostKeyCallback(p.IgnoreHostKey)
 	if err != nil {
 		// nolint: errcheck,gosec
 		log.Printf("read hosts file err: %s", err)
-		return 1
+		return one
 	}
 	p.setConnPool()
 	p.clientConf = ssh.ClientConfig{
@@ -279,7 +282,6 @@ func (p *Pssh) Run() int {
 	cancel()
 
 	return code
-
 }
 
 func (p *Pssh) runConWorkers(ctx context.Context) int {
@@ -316,13 +318,13 @@ func (p *Pssh) printSortResults(ctx context.Context, results chan *result, cws [
 					break L1
 				}
 				p.printResult(resSlise[j], cws[resSlise[j].conID].host)
-				cur = j + 1
+				cur = j + one
 				if firstCode == 0 && resSlise[j].code != 0 {
 					firstCode = resSlise[j].code
 				}
 			}
 		case <-ctx.Done():
-			firstCode = 1
+			firstCode = one
 		}
 	}
 	return firstCode
@@ -346,7 +348,7 @@ func (p *Pssh) printResults(ctx context.Context, results chan *result, cws []*co
 			}
 			p.delReslt(res)
 		case <-ctx.Done():
-			firstCode = 1
+			firstCode = one
 		}
 	}
 	return firstCode
@@ -365,7 +367,11 @@ func (p *Pssh) printResult(res *result, host string) {
 	}
 	if res.err != nil {
 		// nolint: errcheck,gosec
-		p.red.Printf("result err: %s", res.err)
+		e := res.err.Error()
+		if !strings.HasSuffix(e, "\n") {
+			e += "\n"
+		}
+		p.red.Printf("result err: %s", e)
 	}
 	if res.stdout.Len() > 0 {
 		// nolint: errcheck,gosec
@@ -381,25 +387,21 @@ type client interface {
 	NewSession() (*ssh.Session, error)
 }
 
-func getErrs(ctx context.Context, errCh <-chan error) []error {
-	errs := make([]error, 2)
-	for i := 0; i < 2; i++ {
-		errs[i] = nil
+func getErr(ctx context.Context, errCh <-chan error) error {
+	var err error
+L1:
+	for {
 		select {
-		case errs[i] = <-errCh:
+		case e, ok := <-errCh:
+			if !ok {
+				break L1
+			}
+			err = e
 		case <-ctx.Done():
-			return errs
-		}
-	}
-	return errs
-}
-func getFristErr(errs []error) error {
-	for _, err := range errs {
-		if err != nil {
 			return err
 		}
 	}
-	return nil
+	return err
 }
 
 func readStream(ctx context.Context, out io.Writer, r io.Reader, errCh chan<- error) {
@@ -408,6 +410,7 @@ func readStream(ctx context.Context, out io.Writer, r io.Reader, errCh chan<- er
 	case errCh <- err:
 	case <-ctx.Done():
 	}
+	close(errCh)
 }
 
 func (p *Pssh) sshKeyAgentCallback() ssh.AuthMethod {
@@ -419,7 +422,7 @@ func (p *Pssh) sshKeyAgentCallback() ssh.AuthMethod {
 }
 
 func (p *Pssh) mergeAuthMethods(identMethods []ssh.AuthMethod) []ssh.AuthMethod {
-	res := make([]ssh.AuthMethod, 0, len(identMethods)+1)
+	res := make([]ssh.AuthMethod, 0, len(identMethods)+one)
 	if !p.IdentityFileOnly {
 		if keyAgentMehod := p.sshKeyAgentCallback(); keyAgentMehod != nil {
 			res = append(res, keyAgentMehod)
@@ -445,7 +448,7 @@ func (p *Pssh) readIdentFiles() [][]byte {
 	home := os.Getenv("HOME")
 	for _, filePath := range p.IdentFiles {
 		// nolint: gosec
-		filePath = strings.Replace(filePath, "~", home, 1)
+		filePath = strings.Replace(filePath, "~", home, one)
 		buffer, err := ioutil.ReadFile(filePath)
 		if err != nil {
 			continue
