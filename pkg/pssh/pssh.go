@@ -365,7 +365,11 @@ func (p *Pssh) printResult(res *result, host string) {
 	}
 	if res.err != nil {
 		// nolint: errcheck,gosec
-		p.red.Printf("result err: %s", res.err)
+		e := res.err.Error()
+		if !strings.HasSuffix(e, "\n") {
+			e += "\n"
+		}
+		p.red.Printf("result err: %s", e)
 	}
 	if res.stdout.Len() > 0 {
 		// nolint: errcheck,gosec
@@ -381,25 +385,21 @@ type client interface {
 	NewSession() (*ssh.Session, error)
 }
 
-func getErrs(ctx context.Context, errCh <-chan error) []error {
-	errs := make([]error, 2)
-	for i := 0; i < 2; i++ {
-		errs[i] = nil
+func getErr(ctx context.Context, errCh <-chan error) error {
+	var err error
+L1:
+	for {
 		select {
-		case errs[i] = <-errCh:
+		case e, ok := <-errCh:
+			if !ok {
+				break L1
+			}
+			err = e
 		case <-ctx.Done():
-			return errs
-		}
-	}
-	return errs
-}
-func getFristErr(errs []error) error {
-	for _, err := range errs {
-		if err != nil {
 			return err
 		}
 	}
-	return nil
+	return err
 }
 
 func readStream(ctx context.Context, out io.Writer, r io.Reader, errCh chan<- error) {
@@ -408,6 +408,7 @@ func readStream(ctx context.Context, out io.Writer, r io.Reader, errCh chan<- er
 	case errCh <- err:
 	case <-ctx.Done():
 	}
+	close(errCh)
 }
 
 func (p *Pssh) sshKeyAgentCallback() ssh.AuthMethod {
