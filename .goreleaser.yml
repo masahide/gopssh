@@ -60,4 +60,3 @@ snapcrafts:
     description: parallel ssh client
     grade: stable
     confinement: classic
-    publish: true
