@@ -41,10 +41,6 @@ func (s *sessionWork) result(ctx context.Context, err error, res *result) {
 	s.errResult(ctx, res)
 }
 
-type errCh struct {
-	name string
-	ch   chan error
-}
 type sessErr struct {
 	name string
 	err  error
@@ -62,18 +58,15 @@ func (s *sessionWork) run(ctx context.Context, res *result, session sess) {
 		return
 	}
 
-	errChs := []errCh{
-		{name: "stdout", ch: make(chan error, 1)},
-		{name: "stderr", ch: make(chan error, 1)},
-	}
+	errChs := []chan error{make(chan error, 1), make(chan error, 1)}
 	errs := []sessErr{
 		{name: "stdoutStream err:", err: nil}, // 0
 		{name: "stderrStream err:", err: nil}, // 1
 		{name: "", err: nil},                  // 2
 		{name: "I/O err:", err: nil},          // 3
 	}
-	go readStream(ctx, res.stdout, stdout, errChs[0].ch)
-	go readStream(ctx, res.stderr, stderr, errChs[1].ch)
+	go readStream(ctx, res.stdout, stdout, errChs[0])
+	go readStream(ctx, res.stderr, stderr, errChs[1])
 	err = session.Run(s.command)
 	if err != nil {
 		if ee, ok := err.(*ssh.ExitError); ok {
@@ -84,7 +77,7 @@ func (s *sessionWork) run(ctx context.Context, res *result, session sess) {
 		}
 	}
 	for i := 0; i < len(errChs); i++ {
-		errs[i].err = getErr(ctx, errChs[i].ch)
+		errs[i].err = getErr(ctx, errChs[i])
 	}
 	res.err = getAllError(errs)
 	s.errResult(ctx, res)

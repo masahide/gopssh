@@ -7,7 +7,6 @@ OS=$(shell uname -s)
 PKG?=./pkg/pssh
 
 export PATH := ./bin:$(PATH)
-export GO111MODULE := on
 
 # Install all the build and lint dependencies
 setup:
