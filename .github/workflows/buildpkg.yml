@@ -1,0 +1,69 @@
+name: Go package
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+
+env:
+  APP_NAME: 'gopssh'
+  GO_VERSION: '1.19'
+  MAINTAINER: 'YAMASAKI Masahide <masahide.y@gmail.com>'
+  DESC: 'Parallel executable ssh client.'
+
+jobs:
+  build-binary:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Set up Go
+        uses: actions/setup-go@v3
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: Test
+        run: go test -v ./...
+
+
+      - name: Build
+        run: go build -v -o .bin/gopssh cmd/gopssh/main.go
+
+      - name: create sample script
+        run: |
+          mkdir -p .debpkg/usr/local/bin
+          mkdir -p .rpmpkg/usr/local/bin
+          cp -p .bin/* .debpkg/usr/local/bin/
+          cp -p .bin/* .rpmpkg/usr/local/bin/
+
+      - uses: jiro4989/build-deb-action@v2
+        with:
+          package: ${{ env.APP_NAME }}
+          package_root: .debpkg
+          maintainer: ${{ env.MAINTAINER }}
+          version: ${{ github.ref }}
+          arch: 'amd64'
+          desc: '${{ env.DESC }}'
+
+      - uses: jiro4989/build-rpm-action@v2
+        with:
+          summary: '${{ env.DESC }}'
+          package: ${{ env.APP_NAME }}
+          package_root: .rpmpkg
+          maintainer: ${{ env.MAINTAINER }}
+          version: ${{ github.ref }}
+          arch: 'x86_64'
+          desc: '${{ env.DESC }}'
+
+      - uses: actions/upload-artifact@v3
+        with:
+          name: artifact-deb
+          path: |
+            ./*.deb
+      - uses: actions/upload-artifact@v3
+        with:
+          name: artifact-rpm
+          path: |
+            ./*.rpm
+            !./*-debuginfo-*.rpm
+
