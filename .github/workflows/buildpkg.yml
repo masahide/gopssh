@@ -6,10 +6,8 @@ on:
       - 'v*.*.*'
 
 env:
-  APP_NAME: 'gopssh'
   GO_VERSION: '1.19'
-  MAINTAINER: 'YAMASAKI Masahide <masahide.y@gmail.com>'
-  DESC: 'Parallel executable ssh client.'
+  APP_NAME: 'gopssh'
 
 jobs:
   build-binary:
@@ -25,35 +23,42 @@ jobs:
       - name: Test
         run: go test -v ./...
 
+      - name: Get the info
+        id: info
+        run: |
+          echo "ver=${GITHUB_REF/refs\/tags\/v/}" >> $GITHUB_OUTPUT
+          echo "hash=$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
+
+      - name: show info
+        run: |
+          echo "version: ${{ steps.info.outputs.ver }}" >> $GITHUB_STEP_SUMMARY
+          echo "commit:  ${{ steps.info.outputs.hash }}" >> $GITHUB_STEP_SUMMARY
+          echo "date:    $(date --iso-8601=seconds)" >> $GITHUB_STEP_SUMMARY
 
       - name: Build
         run: go build -v -o .bin/gopssh cmd/gopssh/main.go
-
-      - name: create sample script
-        run: |
-          mkdir -p .debpkg/usr/local/bin
-          mkdir -p .rpmpkg/usr/local/bin
-          cp -p .bin/* .debpkg/usr/local/bin/
-          cp -p .bin/* .rpmpkg/usr/local/bin/
-
-      - uses: jiro4989/build-deb-action@v2
+        go build -ldflags "-X main.version=${{ steps.info.outputs.ver }} -X main.commit=${{ steps.info.outputs.hash }} -X main.date=$(date --iso-8601=seconds)"
+          # Build DEB Package
+          #
+      - name: Build Linux RPM Packages
+        uses: kentik/pkg@v1
         with:
-          package: ${{ env.APP_NAME }}
-          package_root: .debpkg
-          maintainer: ${{ env.MAINTAINER }}
-          version: ${{ github.ref }}
-          arch: 'amd64'
-          desc: '${{ env.DESC }}'
+          name: ${{ env.APP_NAME }}
+          version: ${{ steps.info.outputs.ver }}
+          arch: x86_64
+          format: rpm
+          package: package.yml
 
-      - uses: jiro4989/build-rpm-action@v2
+      # Build RPM Package
+      - name: Build Linux deb Packages
+        uses: kentik/pkg@v1
         with:
-          summary: '${{ env.DESC }}'
-          package: ${{ env.APP_NAME }}
-          package_root: .rpmpkg
-          maintainer: ${{ env.MAINTAINER }}
-          version: ${{ github.ref }}
-          arch: 'x86_64'
-          desc: '${{ env.DESC }}'
+          name: ${{ env.APP_NAME }}
+          version: ${{ steps.info.outputs.ver }}
+          arch: x86_64
+          format: deb
+          package: package.yml
+
 
       - uses: actions/upload-artifact@v3
         with:
@@ -66,4 +71,9 @@ jobs:
           path: |
             ./*.rpm
             !./*-debuginfo-*.rpm
+
+      - name: show info
+        run: |
+          echo "ls -la" >> $GITHUB_STEP_SUMMARY
+          ls -la >> $GITHUB_STEP_SUMMARY
 
