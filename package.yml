@@ -1,0 +1,9 @@
+meta:
+  description: 'Parallel executable ssh client.'
+  vendor: 'YAMASAKI Masahide <masahide.y@gmail.com>'
+  maintainer: 'YAMASAKI Masahide <masahide.y@gmail.com>'
+files:
+  "/usr/local/bin/gopssh":
+    file: .bin/gopssh
+    mode: "0755"
+    user: "root"

@@ -40,7 +40,7 @@ jobs:
 
       # Build DEB Package
       - name: Build Linux RPM Packages
-        uses: kentik/pkg@v1
+        uses: kentik/pkg@v1.0.0-rc8
         with:
           name: ${{ env.APP_NAME }}
           version: ${{ steps.info.outputs.ver }}
