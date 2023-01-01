@@ -1,69 +1,181 @@
-name: Go package
+name: Build packages
 
 on:
   push:
-    tags:
-      - 'v*.*.*'
+    #    tags:
+    #  - 'v*.*.*'
 
 env:
-  APP_NAME: 'gopssh'
   GO_VERSION: '1.19'
-  MAINTAINER: 'YAMASAKI Masahide <masahide.y@gmail.com>'
-  DESC: 'Parallel executable ssh client.'
+  APP_NAME: 'gopssh'
+  MAIN_GO: 'cmd/gopssh/main.go'
+  DESC: 'parallel ssh client'
 
 jobs:
-  build-binary:
+
+  info:
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v3
+      - name: Get the info
+        id: info
+        run: |
+          ver=$(date "+%y%m.%d.%S")
+          [[ $GITHUB_REF == refs\/tags\/v* ]] && ver=${GITHUB_REF/refs\/tags\/v/}
+          hash=$(git rev-parse --short HEAD)
+          echo ver=$ver hash=$hash
+          echo "ver=$ver" >> $GITHUB_OUTPUT
+          echo "hash=$hash" >> $GITHUB_OUTPUT
 
+      - name: show info
+        run: |
+          echo "version: ${{ steps.info.outputs.ver }}" >> $GITHUB_STEP_SUMMARY
+          echo "hash:    ${{ steps.info.outputs.hash }}" >> $GITHUB_STEP_SUMMARY
+          echo "date:    $(date --iso-8601=seconds)" >> $GITHUB_STEP_SUMMARY
+    outputs:
+      ver: ${{ steps.info.outputs.ver }}
+      hash: ${{ steps.info.outputs.hash }}
+
+  go-test:
+    runs-on: ubuntu-22.04
+    needs: [info]
+    steps:
+      - uses: actions/checkout@v3
+      - name: Set up Go
+        uses: actions/setup-go@v3
+        with:
+          go-version: ${{ env.GO_VERSION }}
+      - name: Test
+        run: |
+          go test -v ./...
+
+  build-binary:
+    runs-on: ubuntu-22.04
+    needs: [info, go-test]
+    strategy:
+      matrix:
+        goos: [darwin, linux]
+        goarch: [amd64, arm64]
+
+    steps:
+      - uses: actions/checkout@v3
       - name: Set up Go
         uses: actions/setup-go@v3
         with:
           go-version: ${{ env.GO_VERSION }}
 
-      - name: Test
-        run: go test -v ./...
-
-
       - name: Build
-        run: go build -v -o .bin/gopssh cmd/gopssh/main.go
-
-      - name: create sample script
         run: |
-          mkdir -p .debpkg/usr/local/bin
-          mkdir -p .rpmpkg/usr/local/bin
-          cp -p .bin/* .debpkg/usr/local/bin/
-          cp -p .bin/* .rpmpkg/usr/local/bin/
-
-      - uses: jiro4989/build-deb-action@v2
-        with:
-          package: ${{ env.APP_NAME }}
-          package_root: .debpkg
-          maintainer: ${{ env.MAINTAINER }}
-          version: ${{ github.ref }}
-          arch: 'amd64'
-          desc: '${{ env.DESC }}'
-
-      - uses: jiro4989/build-rpm-action@v2
-        with:
-          summary: '${{ env.DESC }}'
-          package: ${{ env.APP_NAME }}
-          package_root: .rpmpkg
-          maintainer: ${{ env.MAINTAINER }}
-          version: ${{ github.ref }}
-          arch: 'x86_64'
-          desc: '${{ env.DESC }}'
+          GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} go build -v \
+            -ldflags "-X main.version=${{ needs.info.outputs.ver }}
+            -X main.commit=${{ needs.info.outputs.hash }}
+            -X main.date=$(date --iso-8601=seconds)" \
+            -o .bin/${{ env.APP_NAME }} \
+            ${{ env.MAIN_GO }}
 
       - uses: actions/upload-artifact@v3
         with:
-          name: artifact-deb
+          name: bin-${{ matrix.goos }}-${{ matrix.goarch }}
           path: |
-            ./*.deb
+            .bin/*
+
+  # build rpm, deb packages
+  build-linux-packages:
+    runs-on: ubuntu-22.04
+    needs: [info, build-binary]
+    strategy:
+      matrix:
+        goarch: [amd64, arm64]
+    steps:
+      - uses: actions/checkout@v3
+      - name: Set up Go
+        uses: actions/setup-go@v3
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - uses: actions/download-artifact@v3
+        with:
+          name: bin-linux-${{ matrix.goarch }}
+          path: .bin
+
+      - name: Build Linux RPM Packages
+        run: |
+          ls -la
+          case ${{ matrix.goarch }} in
+            "amd64") arch=x86_64;;
+            "arm64") arch=aarch64;;
+          esac
+          NAME=${{ env.APP_NAME }} \
+          VERSION=${{ needs.info.outputs.ver }} \
+          HASH=${{ needs.info.outputs.hash }} \
+          ARCH=$arch \
+          RELEASE=1 \
+          BINPATH=.bin/${{ env.APP_NAME }} \
+          go run pack/rpmpack/main.go
+
+      - name: Build Linux DEB Packages
+        run: |
+          VERSION=${{ needs.info.outputs.ver }} \
+          ARCH=${{ matrix.goarch }} \
+          NAME=${{ env.APP_NAME }} \
+          DESC=${{ env.DESC }} \
+          BINPATH=.bin/${{ env.APP_NAME }} \
+          go run pack/debpack/main.go
+
       - uses: actions/upload-artifact@v3
         with:
-          name: artifact-rpm
+          name: linux-packages-${{ matrix.goarch }}
           path: |
             ./*.rpm
-            !./*-debuginfo-*.rpm
+            ./*.deb
+
+      - name: show info
+        run: |
+          echo "ls -la" >> $GITHUB_STEP_SUMMARY
+          ls -la >> $GITHUB_STEP_SUMMARY
+
+  create-release:
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-22.04
+    needs: [info, build-linux-packages]
+    steps:
+      - uses: actions/checkout@v3
+      - name: Download All Artifacts
+        uses: actions/download-artifact@v3
+      - name: Create assets
+        run: |
+          mkdir .dist
+          for os in darwin linux;do
+            for arch in amd64 arm64;do
+              cd bin-${os}-${arch}
+                tar -cvzf ../.dist/${os}-${arch}.tar.gz *
+              cd ..
+            done
+          done
+          for arch in amd64 arm64;do
+            mv linux-packages-${arch}/* .dist
+          done
+          ls -la .dist
+          ls -la .dist>> $GITHUB_STEP_SUMMARY
+      - name: Create release.md
+        run: |
+          cp releasenote.template.md release.md
+          sed -i -e "s/__amd64rpm__/$(basename .dist/*x86_64.rpm)/" release.md
+          sed -i -e "s/__arm64rpm__/$(basename .dist/*aarch64.rpm)/" release.md
+          sed -i -e "s/__amd64deb__/$(basename .dist/*amd64.deb)/" release.md
+          sed -i -e "s/__arm64deb__/$(basename .dist/*arm64.deb)/" release.md
+
+      - name: Release
+        uses: softprops/action-gh-release@v1
+        with:
+          prerelease: true
+          body_path: release.md
+          fail_on_unmatched_files: true
+          generate_release_notes: true
+          append_body: true
+          files: |
+            .dist/*.rpm
+            .dist/*.deb
+            .dist/*.tar.gz
+
 

@@ -1,8 +1,6 @@
 # gopssh
 [![Go Report Card](https://goreportcard.com/badge/github.com/masahide/gopssh)](https://goreportcard.com/report/github.com/masahide/gopssh)
-[![Build Status](https://travis-ci.org/masahide/gopssh.svg?branch=master)](https://travis-ci.org/masahide/gopssh)
-[![codecov](https://codecov.io/gh/masahide/gopssh/branch/master/graph/badge.svg)](https://codecov.io/gh/masahide/gopssh)
-[![goreleaser](https://img.shields.io/badge/powered%20by-goreleaser-green.svg?style=flat-square)](https://github.com/goreleaser)
+![Build status](https://github.com/masahide/gopssh/actions/workflows/buildpkg.yml/badge.svg)
 
 parallel ssh client
 
@@ -48,3 +46,40 @@ example:
 
 see [releases page](https://github.com/masahide/gopssh/releases).
 
+
+
+## build
+
+```
+go build -v -ldflags "-X main.version=0.5.6
+  -X main.commit=$(git rev-parse --short HEAD)
+  -X main.date=$(date --iso-8601=seconds)" \
+  -o .bin/gopssh \
+  cmd/gopssh/main.go
+```
+
+### build rpm
+
+```
+ver=$(.bin/gopssh -version)
+export VERSION=$(echo "$ver"|awk '/^version/{print $2}')
+export HASH=$(echo "$ver"|awk '/^commit/{print $2}')
+export ARCH=$(uname -m)
+export RELEASE=1
+export NAME=gopssh
+export BINPATH=.bin/$NAME
+go run pack/rpmpack/main.go
+```
+
+
+### build deb
+
+```
+ver=$(.bin/gopssh -version)
+export VERSION=$(echo "$ver"|awk '/^version/{print $2}')
+export ARCH=amd64
+export MAINTAINER=$USER
+export NAME=gopssh
+export BINPATH=.bin/$NAME
+go run pack/debpack/main.go
+```
