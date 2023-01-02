@@ -59,7 +59,7 @@ jobs:
 
       - uses: actions/upload-artifact@v3
         with:
-          name: ${{ APP_NAME }}.deb
+          name: ${{ env.APP_NAME }}.deb
           path: |
             ./*.deb
       - uses: actions/upload-artifact@v3
