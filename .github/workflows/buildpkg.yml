@@ -50,23 +50,21 @@ jobs:
 
       # Build RPM Package
       - name: Build Linux DEB Packages
-        uses: kentik/pkg@v1.0.0-rc8
+        uses: masahide/docker-rpmbuild@v0.0.1
+        id: rpm
         with:
-          name: ${{ env.APP_NAME }}
+          spec: rpm.psec
           version: ${{ steps.info.outputs.ver }}
-          arch: x86_64
-          format: deb
-          package: package.yml
 
 
       - uses: actions/upload-artifact@v3
         with:
-          name: artifact-deb
+          name: ${{ APP_NAME }}.deb
           path: |
             ./*.deb
       - uses: actions/upload-artifact@v3
         with:
-          name: artifact-rpm
+          name: ${{ steps.rpm.outputs.rpmfiles }}
           path: |
             ./*.rpm
             !./*-debuginfo-*.rpm
