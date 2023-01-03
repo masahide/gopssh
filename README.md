@@ -48,3 +48,21 @@ example:
 
 see [releases page](https://github.com/masahide/gopssh/releases).
 
+
+
+## build
+
+```
+go build -v -ldflags "-X main.version=0.5.6 -X main.commit=$(git rev-parse --short HEAD) -X main.date=$(date --iso-8601=seconds)" -o .bin/gopssh cmd/gopssh/main.go
+```
+
+### build rpm
+
+```
+ver=$(.bin/gopssh -version)
+version=$(echo "$ver"|awk '/^version/{print $2}')
+commit=$(echo "$ver"|awk '/^commit/{print $2}')
+arch=$(uname -m)
+release=1
+go run -ldflags "-X main.name=gopssh -X main.release=$release -X main.version=$version -X main.hash=$commit -X main.arch=$arch" cmd/rpmpack/main.go
+```

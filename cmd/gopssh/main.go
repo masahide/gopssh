@@ -78,7 +78,7 @@ func checkFlag(w io.Writer) (ret int, exit bool) {
 	flag.CommandLine.SetOutput(w)
 	if *showVer {
 		// nolint: errcheck
-		fmt.Fprintf(w, "%v, commit %v, built at %v\n", version, commit, date)
+		fmt.Fprintf(w, "version: %v\ncommit: %v\nbuilt_at: %v\n", version, commit, date)
 		return 0, true
 	}
 	if flag.NArg() == 0 {

@@ -8,6 +8,7 @@ on:
 env:
   GO_VERSION: '1.19'
   APP_NAME: 'gopssh'
+  MAIN_GO: 'cmd/gopssh/maing.go'
 
 jobs:
   build-binary:
@@ -36,37 +37,23 @@ jobs:
           echo "date:    $(date --iso-8601=seconds)" >> $GITHUB_STEP_SUMMARY
 
       - name: Build
-        run: go build -v -ldflags "-X main.version=${{ steps.info.outputs.ver }} -X main.commit=${{ steps.info.outputs.hash }} -X main.date=$(date --iso-8601=seconds)" -o .bin/gopssh cmd/gopssh/main.go
+        run: go build -v -ldflags "-X main.version=${{ steps.info.outputs.ver }} -X main.commit=${{ steps.info.outputs.hash }} -X main.date=$(date --iso-8601=seconds)" -o .bin/${{ env.APP_NAME }} ${{ env.MAIN_GO }}
 
-      - name: Build Linux DEB Packages
-        uses: kentik/pkg@v1.0.0-rc8
-        with:
-          name: ${{ env.APP_NAME }}
-          version: ${{ steps.info.outputs.ver }}
-          arch: x86_64
-          format: rpm
-          package: package.yml
-
-      # Build RPM Package
       - name: Build Linux RPM Packages
-        uses: masahide/docker-rpmbuild@v0.0.1
         id: rpm
-        with:
-          spec: rpm.sec
-          version: ${{ steps.info.outputs.ver }}
-
+        run: echo file=$(go run -ldflags "-X main.name=${{ env.APP_NAME }} -X main.release=1 -X main.version=${{ steps.info.outputs.ver }} -X main.hash=${{ steps.info.outputs.hash }} -X main.arch=x86_64" cmd/rpmpack/main.go) >> $GITHUB_OUTPUT
 
       - uses: actions/upload-artifact@v3
         with:
-          name: ${{ env.APP_NAME }}.deb
-          path: |
-            ./*.deb
-      - uses: actions/upload-artifact@v3
-        with:
-          name: ${{ steps.rpm.outputs.rpmfiles }}
+          name: ${{ steps.rpm.outputs.file }}
           path: |
             ./*.rpm
-            !./*-debuginfo-*.rpm
+
+        #- uses: actions/upload-artifact@v3
+        #with:
+        #  name: ${{ env.APP_NAME }}.deb
+        #  path: |
+        #    ./*.deb
 
       - name: show info
         run: |
