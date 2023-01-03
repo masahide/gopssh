@@ -55,7 +55,7 @@ jobs:
 
       - uses: actions/upload-artifact@v3
         with:
-          name: ${{ step.deb.outputs.file }}.deb
+          name: ${{ steps.deb.outputs.file }}
           path: |
             ./*.deb
 
