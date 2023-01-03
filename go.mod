@@ -5,6 +5,7 @@ require (
 	github.com/dzeromsk/debpack v0.0.0-20190912160929-4b3d7b5dd69b
 	github.com/fatih/color v1.7.0
 	github.com/google/rpmpack v0.0.0-20221120200012-98b63d62fd77
+	github.com/kelseyhightower/envconfig v1.4.0
 	github.com/pkg/errors v0.9.1
 	golang.org/x/crypto v0.0.0-20181203042331-505ab145d0a9
 )

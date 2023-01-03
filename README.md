@@ -53,18 +53,24 @@ see [releases page](https://github.com/masahide/gopssh/releases).
 ## build
 
 ```
-go build -v -ldflags "-X main.version=0.5.6 -X main.commit=$(git rev-parse --short HEAD) -X main.date=$(date --iso-8601=seconds)" -o .bin/gopssh cmd/gopssh/main.go
+go build -v -ldflags "-X main.version=0.5.6
+  -X main.commit=$(git rev-parse --short HEAD)
+  -X main.date=$(date --iso-8601=seconds)" \
+  -o .bin/gopssh \
+  cmd/gopssh/main.go
 ```
 
 ### build rpm
 
 ```
 ver=$(.bin/gopssh -version)
-version=$(echo "$ver"|awk '/^version/{print $2}')
-commit=$(echo "$ver"|awk '/^commit/{print $2}')
-arch=$(uname -m)
-release=1
-go run -ldflags "-X main.name=gopssh -X main.release=$release -X main.version=$version -X main.hash=$commit -X main.arch=$arch" cmd/rpmpack/main.go
+export VERSION=$(echo "$ver"|awk '/^version/{print $2}')
+export HASH=$(echo "$ver"|awk '/^commit/{print $2}')
+export ARCH=$(uname -m)
+export RELEASE=1
+export NAME=gopssh
+export BINPATH=.bin/$NAME
+go run cmd/rpmpack/main.go
 ```
 
 
@@ -72,7 +78,10 @@ go run -ldflags "-X main.name=gopssh -X main.release=$release -X main.version=$v
 
 ```
 ver=$(.bin/gopssh -version)
-version=$(echo "$ver"|awk '/^version/{print $2}')
-arch=amd64
-go run -ldflags "-X main.name=gopssh -X main.version=$version -X main.arch=$arch" cmd/debpack/main.go
+export VERSION=$(echo "$ver"|awk '/^version/{print $2}')
+export ARCH=amd64
+export MAINTAINER=$USER
+export NAME=gopssh
+export BINPATH=.bin/$NAME
+go run cmd/debpack/main.go
 ```

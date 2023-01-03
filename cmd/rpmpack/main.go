@@ -1,57 +1,59 @@
 package main
 
 import (
-	"flag"
 	"fmt"
 	"log"
 	"os"
 	"path/filepath"
 
 	"github.com/google/rpmpack"
+	"github.com/kelseyhightower/envconfig"
 )
 
-var (
-	name    = "app"
-	version = "0.0.1"
-	hash    = ""
-	release = "el7"
-	arch    = "x86_64"
-	// arch = "noarch"
-)
+type specification struct {
+	BinPath string `required:"true"`
+	Name    string `default:"app"`
+	Version string `default:"0.0.1"`
+	Hash    string `default:""`
+	Release string `default:"el7"`
+	Arch    string `default:"x86_64"`
+	Sign    string
+}
 
 func main() {
-
-	sign := flag.Bool("sign", false, "sign the package with a fake sig")
-	flag.Parse()
-
-	if len(hash) > 0 {
-		release = hash + "." + release
+	var s specification
+	err := envconfig.Process("", &s)
+	if err != nil {
+		log.Fatal(err.Error())
+	}
+	if len(s.Hash) > 0 {
+		s.Release = s.Hash + "." + s.Release
 	}
 	r, err := rpmpack.NewRPM(rpmpack.RPMMetaData{
-		Name:    name,
-		Version: version,
-		Release: release,
-		Arch:    arch,
+		Name:    s.Name,
+		Version: s.Version,
+		Release: s.Release,
+		Arch:    s.Arch,
 	})
 	if err != nil {
 		log.Fatal(err)
 	}
 	r.AddFile(
 		rpmpack.RPMFile{
-			Name:  filepath.Join("/usr/local/bin/", name),
+			Name:  filepath.Join("/usr/local/bin/", s.Name),
 			Mode:  0755,
-			Body:  file(filepath.Join(".bin", name)),
+			Body:  file(s.BinPath),
 			Owner: "root",
 			Group: "root",
 		})
-	if *sign {
+	if len(s.Sign) > 0 {
 		r.SetPGPSigner(func([]byte) ([]byte, error) {
-			return []byte(`this is not a signature`), nil
+			return []byte(s.Sign), nil
 		})
 	}
 	// http://ftp.rpm.org/max-rpm/ch-rpm-file-format.html
 	// ex: name-version-release.architecture.rpm
-	filename := name + "-" + version + "-" + release + "." + arch + ".rpm"
+	filename := s.Name + "-" + s.Version + "-" + s.Release + "." + s.Arch + ".rpm"
 	file, err := os.OpenFile(filename, os.O_CREATE|os.O_WRONLY, 0644)
 	if err != nil {
 		log.Fatalf("OpenFile(%s) err: %v", filename, err)
