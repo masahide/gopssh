@@ -43,17 +43,21 @@ jobs:
         id: rpm
         run: echo file=$(go run -ldflags "-X main.name=${{ env.APP_NAME }} -X main.release=1 -X main.version=${{ steps.info.outputs.ver }} -X main.hash=${{ steps.info.outputs.hash }} -X main.arch=x86_64" cmd/rpmpack/main.go) >> $GITHUB_OUTPUT
 
+      - name: Build Linux DEB Packages
+        id: deb
+        run: echo file=$(go run -ldflags "-X main.name=${{ env.APP_NAME }} -X main.version=${{ steps.info.outputs.ver }} -X main.arch=amd64" cmd/debpack/main.go) >> $GITHUB_OUTPUT
+
       - uses: actions/upload-artifact@v3
         with:
           name: ${{ steps.rpm.outputs.file }}
           path: |
             ./*.rpm
 
-        #- uses: actions/upload-artifact@v3
-        #with:
-        #  name: ${{ env.APP_NAME }}.deb
-        #  path: |
-        #    ./*.deb
+      - uses: actions/upload-artifact@v3
+        with:
+          name: ${{ step.deb.outputs.file }}.deb
+          path: |
+            ./*.deb
 
       - name: show info
         run: |

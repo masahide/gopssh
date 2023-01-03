@@ -66,3 +66,13 @@ arch=$(uname -m)
 release=1
 go run -ldflags "-X main.name=gopssh -X main.release=$release -X main.version=$version -X main.hash=$commit -X main.arch=$arch" cmd/rpmpack/main.go
 ```
+
+
+### build deb
+
+```
+ver=$(.bin/gopssh -version)
+version=$(echo "$ver"|awk '/^version/{print $2}')
+arch=amd64
+go run -ldflags "-X main.name=gopssh -X main.version=$version -X main.arch=$arch" cmd/debpack/main.go
+```

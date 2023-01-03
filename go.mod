@@ -2,6 +2,7 @@ module github.com/masahide/gopssh
 
 require (
 	github.com/cenkalti/backoff v2.1.0+incompatible
+	github.com/dzeromsk/debpack v0.0.0-20190912160929-4b3d7b5dd69b
 	github.com/fatih/color v1.7.0
 	github.com/google/rpmpack v0.0.0-20221120200012-98b63d62fd77
 	github.com/pkg/errors v0.9.1
@@ -9,6 +10,7 @@ require (
 )
 
 require (
+	github.com/blakesmith/ar v0.0.0-20190502131153-809d4375e1fb // indirect
 	github.com/cavaliergopher/cpio v1.0.1 // indirect
 	github.com/klauspost/compress v1.15.1 // indirect
 	github.com/klauspost/pgzip v1.2.5 // indirect
