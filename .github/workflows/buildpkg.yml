@@ -115,11 +115,11 @@ jobs:
 
       - name: Build Linux DEB Packages
         run: |
-          VERSION=${{ needs.info.outputs.ver }} \
-          ARCH=${{ matrix.goarch }} \
-          NAME=${{ env.APP_NAME }} \
-          DESC=${{ env.DESC }} \
-          BINPATH=.bin/${{ env.APP_NAME }} \
+          VERSION="${{ needs.info.outputs.ver }}" \
+          ARCH="${{ matrix.goarch }}" \
+          NAME="${{ env.APP_NAME }}" \
+          DESC="${{ env.DESC }}" \
+          BINPATH=".bin/${{ env.APP_NAME }}" \
           go run pack/debpack/main.go
 
       - uses: actions/upload-artifact@v3
