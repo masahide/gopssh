@@ -1,6 +1,6 @@
 # gopssh
 [![Go Report Card](https://goreportcard.com/badge/github.com/masahide/gopssh)](https://goreportcard.com/report/github.com/masahide/gopssh)
-![Build status](https://github.com/masahide/gopssh/actions/workflows/buildpkg.yml/badge.svg)
+[![Build status](https://github.com/masahide/gopssh/actions/workflows/buildpkg.yml/badge.svg)](https://github.com/masahide/gopssh/actions/workflows/buildpkg.yml)
 
 parallel ssh client
 
