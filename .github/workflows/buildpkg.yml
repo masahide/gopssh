@@ -148,7 +148,8 @@ jobs:
           for os in darwin linux;do
             for arch in amd64 arm64;do
               cd bin-${os}-${arch}
-                tar -cvzf ../.dist/${os}-${arch}.tar.gz *
+                chmod 755 ${{ env.APP_NAME }}
+                tar -cvzf ../.dist/${os}-${arch}.tar.gz ${{ env.APP_NAME }}
               cd ..
             done
           done
