@@ -30,13 +30,6 @@ sudo dpkg -i /tmp/gopssh.deb
 
 
 ```bash
-# x86_64
-curl -sL https://github.com/masahide/gopssh/releases/latest/download/darwin-amd64.tar.gz|tar xvz
-sudo mv gopssh /usr/local/bin
-
-# arm (Apple silicon)
-curl -sL https://github.com/masahide/gopssh/releases/latest/download/darwin-arm64.tar.gz|tar xvz
-sudo mv gopssh /usr/local/bin
+# x86_64 or Apple silicon (Automatic switching)
+brew install masahide/tap/gopssh
 ```
-
-
