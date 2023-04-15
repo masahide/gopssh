@@ -3,6 +3,7 @@ package pssh
 import (
 	"crypto"
 	"errors"
+	"fmt"
 	"io"
 	"log"
 	"net"
@@ -19,6 +20,7 @@ type keyAgent struct {
 }
 
 type connPools struct {
+	socket    string
 	limit     chan struct{}
 	connPool  sync.Pool
 	netDialer dialIface
@@ -29,24 +31,46 @@ type dialIface interface {
 }
 type netDial struct{}
 
-func (n netDial) Dial(network, address string) (net.Conn, error) { return net.Dial(network, address) }
+func (n *netDial) Dial(network, address string) (net.Conn, error) { return net.Dial(network, address) }
+
+func newNetDial() dialIface { return &netDial{} }
+
+var newNetDialFunc func() dialIface
+
+func init() {
+	newNetDialFunc = newNetDial
+}
+
+func (cp *connPools) newConnPool() any {
+	ka, err := cp.newKeyAgent(cp.socket)
+	if err != nil {
+		log.Fatal(err)
+	}
+	return ka
+}
 
 func newConnPools(socket string, n int) *connPools {
 	cp := &connPools{
-		netDialer: netDial{},
+		netDialer: newNetDialFunc(),
+		socket:    socket,
 	}
 	cp.limit = make(chan struct{}, n)
-	cp.connPool = sync.Pool{New: func() interface{} {
-		var ka keyAgent
-		var err error
-		ka.authConn, err = cp.dialSocket(socket)
-		if err != nil {
-			log.Fatalf("Failed dial socket: %s", socket)
-		}
-		ka.ExtendedAgent = agent.NewClient(ka.authConn)
-		return &ka
-	}}
+	cp.connPool = sync.Pool{New: cp.newConnPool}
 	return cp
+}
+
+func (cp *connPools) newKeyAgent(socket string) (*keyAgent, error) {
+	var ka keyAgent
+	var err error
+	ka.authConn, err = cp.dialSocket(socket)
+	if err != nil {
+		return nil, fmt.Errorf("Failed dial socket: %s,err:%w", socket, err)
+	}
+	if ka.authConn == nil {
+		return nil, fmt.Errorf("dial socket: %s authConn==null", socket)
+	}
+	ka.ExtendedAgent = agent.NewClient(ka.authConn)
+	return &ka, nil
 }
 
 func (cp *connPools) Get() *keyAgent {
