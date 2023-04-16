@@ -4,6 +4,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"log"
 	"os"
 	"time"
 
@@ -91,6 +92,7 @@ func checkFlag(w io.Writer) (ret int, exit bool) {
 }
 
 func main() {
+	log.SetFlags(log.LstdFlags | log.Lshortfile)
 	p := &pssh.Pssh{Config: newConfig()}
 	if ret, exit := checkFlag(os.Stdout); exit {
 		os.Exit(ret)

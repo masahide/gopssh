@@ -56,7 +56,7 @@ func TestGetPut(t *testing.T) {
 
 func TestDialSocket(t *testing.T) {
 	cp := &connPools{netDialer: mockNetDial{}}
-	con, err := cp.dialSocket("")
+	con, err := cp.dialSocket()
 	if err != nil {
 		t.Error(err)
 	}
