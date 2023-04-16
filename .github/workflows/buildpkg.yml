@@ -65,7 +65,7 @@ jobs:
 
       - name: Build
         run: |
-          GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} go build -v \
+          GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} CGO_ENABLED=0 go build -v \
             -ldflags "-X main.version=${{ needs.info.outputs.ver }}
             -X main.commit=${{ needs.info.outputs.hash }}
             -X main.date=$(date --iso-8601=seconds)" \
