@@ -7,7 +7,7 @@ require (
 	github.com/google/rpmpack v0.0.0-20221120200012-98b63d62fd77
 	github.com/kelseyhightower/envconfig v1.4.0
 	github.com/pkg/errors v0.9.1
-	golang.org/x/crypto v0.8.0
+	golang.org/x/crypto v0.17.0
 )
 
 require (
@@ -18,8 +18,8 @@ require (
 	github.com/mattn/go-colorable v0.1.13 // indirect
 	github.com/mattn/go-isatty v0.0.18 // indirect
 	github.com/ulikunitz/xz v0.5.11 // indirect
-	golang.org/x/sys v0.7.0 // indirect
-	golang.org/x/term v0.7.0 // indirect
+	golang.org/x/sys v0.15.0 // indirect
+	golang.org/x/term v0.15.0 // indirect
 )
 
 go 1.20
