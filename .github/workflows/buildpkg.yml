@@ -16,7 +16,7 @@ jobs:
   info:
     runs-on: ubuntu-22.04
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
       - name: Get the info
         id: info
         run: |
@@ -39,11 +39,11 @@ jobs:
   go-test:
     runs-on: ubuntu-22.04
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
       - name: Set up Go
-        uses: actions/setup-go@v3
+        uses: actions/setup-go@v4
         with:
-          go-version: ${{ env.GO_VERSION }}
+          go-version-file: 'go.mod'
       - name: Test
         run: |
           go test -v ./...
@@ -57,11 +57,11 @@ jobs:
         goarch: [amd64, arm64]
 
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
       - name: Set up Go
-        uses: actions/setup-go@v3
+        uses: actions/setup-go@v4
         with:
-          go-version: ${{ env.GO_VERSION }}
+          go-version-file: 'go.mod'
 
       - name: Build
         run: |
@@ -72,7 +72,7 @@ jobs:
             -o .bin/${{ env.APP_NAME }} \
             ${{ env.MAIN_GO }}
 
-      - uses: actions/upload-artifact@v3
+      - uses: actions/upload-artifact@v4
         with:
           name: bin-${{ matrix.goos }}-${{ matrix.goarch }}
           path: |
@@ -86,13 +86,13 @@ jobs:
       matrix:
         goarch: [amd64, arm64]
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
       - name: Set up Go
-        uses: actions/setup-go@v3
+        uses: actions/setup-go@v4
         with:
-          go-version: ${{ env.GO_VERSION }}
+          go-version-file: 'go.mod'
 
-      - uses: actions/download-artifact@v3
+      - uses: actions/download-artifact@v4
         with:
           name: bin-linux-${{ matrix.goarch }}
           path: .bin
@@ -121,7 +121,7 @@ jobs:
           BINPATH=".bin/${{ env.APP_NAME }}" \
           go run pack/debpack/main.go
 
-      - uses: actions/upload-artifact@v3
+      - uses: actions/upload-artifact@v4
         with:
           name: linux-packages-${{ matrix.goarch }}
           path: |
@@ -138,9 +138,9 @@ jobs:
     runs-on: ubuntu-22.04
     needs: [info, build-linux-packages]
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
       - name: Download All Artifacts
-        uses: actions/download-artifact@v3
+        uses: actions/download-artifact@v4
       - name: Create assets
         run: |
           mkdir .dist
@@ -166,7 +166,7 @@ jobs:
           sed -i -e "s/__arm64deb__/$(basename .dist/*arm64.deb)/" release.md
 
       - name: Release
-        uses: softprops/action-gh-release@v1
+        uses: softprops/action-gh-release@v2
         with:
           prerelease: true
           body_path: release.md
