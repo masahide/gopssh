@@ -71,8 +71,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: bin-${{ matrix.goos }}-${{ matrix.goarch }}
-          path: |
-            .bin/*
+          path: .bin/${{ env.APP_NAME }}
 
   # build rpm, deb packages
   build-linux-packages:
