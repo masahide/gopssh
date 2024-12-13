@@ -6,13 +6,12 @@ on:
     #  - 'v*.*.*'
 
 env:
-  GO_VERSION: '1.20'
-  APP_NAME: 'gopssh'
-  MAIN_GO: 'cmd/gopssh/main.go'
-  DESC: 'parallel ssh client'
+  GO_VERSION: "1.20"
+  APP_NAME: "gopssh"
+  MAIN_GO: "cmd/gopssh/main.go"
+  DESC: "parallel ssh client"
 
 jobs:
-
   info:
     runs-on: ubuntu-22.04
     steps:
@@ -41,9 +40,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Set up Go
-        uses: actions/setup-go@v4
+        uses: actions/setup-go@v5
         with:
-          go-version-file: 'go.mod'
+          go-version-file: "go.mod"
       - name: Test
         run: |
           go test -v ./...
@@ -59,15 +58,15 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Set up Go
-        uses: actions/setup-go@v4
+        uses: actions/setup-go@v5
         with:
-          go-version-file: 'go.mod'
+          go-version-file: "go.mod"
 
       - name: Build
         run: |
           GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} CGO_ENABLED=0 go build -v \
-            -ldflags "-X main.version=${{ needs.info.outputs.ver }}
-            -X main.commit=${{ needs.info.outputs.hash }}
+            -ldflags "-X main.version=${{ needs.info.outputs.ver }} \
+            -X main.commit=${{ needs.info.outputs.hash }} \
             -X main.date=$(date --iso-8601=seconds)" \
             -o .bin/${{ env.APP_NAME }} \
             ${{ env.MAIN_GO }}
@@ -90,7 +89,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v4
         with:
-          go-version-file: 'go.mod'
+          go-version-file: "go.mod"
 
       - uses: actions/download-artifact@v4
         with:
