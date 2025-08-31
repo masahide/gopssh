@@ -34,3 +34,6 @@ dist/
 bin/
 debug.test
 snap.login
+
+.gocache/
+.gopath/

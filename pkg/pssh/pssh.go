@@ -219,10 +219,24 @@ func (p *Pssh) newConWork(id int, host string) *conWork {
 	return c
 }
 func (p *Pssh) setConnPool() {
-	if len(p.SSHAuthSocket) == 0 {
-		return
-	}
-	p.conns = newConnPools(p.SSHAuthSocket, p.MaxAgentConns)
+    if len(p.SSHAuthSocket) == 0 {
+        // On Windows, fall back to the default OpenSSH agent named pipe.
+        // This allows using the built-in OpenSSH agent even when SSH_AUTH_SOCK is not set.
+        // Default path: \\.\pipe\openssh-ssh-agent
+        if isWindows() {
+            p.SSHAuthSocket = `\\.\pipe\openssh-ssh-agent`
+        } else {
+            return
+        }
+    }
+    p.conns = newConnPools(p.SSHAuthSocket, p.MaxAgentConns)
+}
+
+// isWindows reports whether the current GOOS is windows.
+func isWindows() bool {
+    // small local helper to avoid importing runtime broadly
+    // implemented via build tags would be overkill here.
+    return os.PathSeparator == '\\'
 }
 
 // Run main task

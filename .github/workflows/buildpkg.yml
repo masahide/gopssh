@@ -52,7 +52,7 @@ jobs:
     needs: [info, go-test]
     strategy:
       matrix:
-        goos: [darwin, linux]
+        goos: [darwin, linux, windows]
         goarch: [amd64, arm64]
 
     steps:
@@ -64,14 +64,21 @@ jobs:
 
       - name: Build
         run: |
-          GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} CGO_ENABLED=0 go build -v -ldflags "-X main.version=${{ needs.info.outputs.ver }} -X main.commit=${{ needs.info.outputs.hash }} -X main.date=$(date --iso-8601=seconds)" -o .bin/${{ env.APP_NAME }} ${{ env.MAIN_GO }}
+          BINARY=.bin/${{ env.APP_NAME }}
+          if [ "${{ matrix.goos }}" = "windows" ]; then BINARY="${BINARY}.exe"; fi
+          GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} CGO_ENABLED=0 \
+            go build -v -ldflags "-X main.version=${{ needs.info.outputs.ver }} -X main.commit=${{ needs.info.outputs.hash }} -X main.date=$(date --iso-8601=seconds)" \
+            -o ${BINARY} ${{ env.MAIN_GO }}
           ls -la
           ls -la .bin
 
       - uses: actions/upload-artifact@v4
         with:
           name: bin-${{ matrix.goos }}-${{ matrix.goarch }}
-          path: .bin/${{ env.APP_NAME }}
+          path: |
+            .bin/${{ env.APP_NAME }}
+            .bin/${{ env.APP_NAME }}.exe
+          if-no-files-found: ignore
 
   # build rpm, deb packages
   build-linux-packages:
@@ -139,11 +146,17 @@ jobs:
       - name: Create assets
         run: |
           mkdir .dist
-          for os in darwin linux;do
+          for os in darwin linux windows;do
             for arch in amd64 arm64;do
               cd bin-${os}-${arch}
-                chmod 755 ${{ env.APP_NAME }}
-                tar -cvzf ../.dist/${os}-${arch}.tar.gz ${{ env.APP_NAME }}
+                if [ "$os" = "windows" ]; then
+                  # windows: zip the .exe
+                  if [ -f "${{ env.APP_NAME }}.exe" ]; then chmod 755 ${{ env.APP_NAME }}.exe; fi
+                  zip -9 -j ../.dist/${os}-${arch}.zip ${{ env.APP_NAME }}.exe || true
+                else
+                  chmod 755 ${{ env.APP_NAME }}
+                  tar -cvzf ../.dist/${os}-${arch}.tar.gz ${{ env.APP_NAME }}
+                fi
               cd ..
             done
           done
@@ -172,6 +185,7 @@ jobs:
             .dist/*.rpm
             .dist/*.deb
             .dist/*.tar.gz
+            .dist/*.zip
       - name: Create homebrew Formula
         run: |
           cp pack/Formula/template.rb gopssh.rb

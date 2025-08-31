@@ -47,6 +47,38 @@ example:
 see [releases page](https://github.com/masahide/gopssh/releases).
 
 
+## Windows
+
+Windows での OpenSSH agent 対応:
+
+- 既定のnamed pipe: `\\.\pipe\openssh-ssh-agent`
+- `SSH_AUTH_SOCK` が未設定でも上記の既定パスを自動的に使用します。
+- カスタムのnamed pipeを使いたい場合は `SSH_AUTH_SOCK` に以下のいずれかの形式で指定してください。
+  - `\\.\pipe\openssh-ssh-agent`
+  - `//./pipe/openssh-ssh-agent`
+  - `np:////./pipe/openssh-ssh-agent`
+- OpenSSH Authentication Agent サービスを起動してください（Windows 標準の OpenSSH）。
+
+実行例（PowerShell）:
+
+```powershell
+# 既定のnamed pipeを使用（SSH_AUTH_SOCK 未設定でも可）
+gopssh.exe -h hosts.txt whoami
+
+# 特定のnamed pipeを明示指定
+$env:SSH_AUTH_SOCK = "\\\.\pipe\openssh-ssh-agent"
+gopssh.exe -h hosts.txt hostname
+```
+
+ビルド例（クロスコンパイル）:
+
+```bash
+GOOS=windows GOARCH=amd64 CGO_ENABLED=0 \
+  go build -v -ldflags "-X main.version=0.0.0 -X main.commit=$(git rev-parse --short HEAD) -X main.date=$(date --iso-8601=seconds)" \
+  -o .bin/gopssh.exe cmd/gopssh/main.go
+```
+
+
 
 ## build
 
