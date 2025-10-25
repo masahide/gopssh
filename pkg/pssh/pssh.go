@@ -6,7 +6,6 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"log"
 	"net"
 	"os"
@@ -185,7 +184,7 @@ var re = regexp.MustCompile(":.+")
 
 func readHosts(fileName string) ([]string, error) {
 	// nolint: gosec
-	data, err := ioutil.ReadFile(fileName)
+	data, err := os.ReadFile(fileName)
 	if err != nil {
 		return nil, err
 	}
@@ -265,7 +264,7 @@ func (p *Pssh) Run() int {
 
 	stdin := []byte{}
 	if p.StdinFlag {
-		if stdin, err = ioutil.ReadAll(os.Stdin); err != nil {
+		if stdin, err = io.ReadAll(os.Stdin); err != nil {
 			log.Fatal(err)
 		}
 	}
@@ -449,7 +448,7 @@ func (p *Pssh) readIdentFiles() [][]byte {
 	for _, filePath := range p.IdentFiles {
 		// nolint: gosec
 		filePath = strings.Replace(filePath, "~", home, one)
-		buffer, err := ioutil.ReadFile(filePath)
+		buffer, err := os.ReadFile(filePath)
 		if err != nil {
 			continue
 		}

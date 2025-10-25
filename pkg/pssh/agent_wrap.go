@@ -64,7 +64,7 @@ func (cp *connPools) newKeyAgent() (*keyAgent, error) {
 	var err error
 	ka.authConn, err = cp.dialSocket()
 	if err != nil {
-		return nil, fmt.Errorf("Failed dial sockFile: %s,err:%w", cp.sockFile, err)
+		return nil, fmt.Errorf("failed dial sockFile: %s, err:%w", cp.sockFile, err)
 	}
 	if ka.authConn == nil {
 		return nil, fmt.Errorf("dial sockFile: %s authConn==null", cp.sockFile)
