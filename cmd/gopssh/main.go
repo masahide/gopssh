@@ -6,16 +6,15 @@ import (
 	"io"
 	"log"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/masahide/gopssh/pkg/pssh"
-	"golang.org/x/crypto/ssh/terminal"
+	"golang.org/x/crypto/ssh"
+	"golang.org/x/term"
 )
 
 const (
-	defaultKexFlags     = "diffie-hellman-group1-sha1,diffie-hellman-group14-sha1,ecdh-sha2-nistp256,ecdh-sha2-nistp384,ecdh-sha2-nistp521,curve25519-sha256@libssh.org"
-	defaultCiphersFlags = "arcfour256,aes128-gcm@openssh.com,chacha20-poly1305@openssh.com,aes128-ctr,aes192-ctr,aes256-ctr"
-	defaultMacsFlags    = "hmac-sha1-96,hmac-sha1,hmac-sha2-256,hmac-sha2-256-etm@openssh.com"
 	// https://man.openbsd.org/ssh_config#IdentityFile
 	defaultIdentityFiles = "~/.ssh/id_dsa,~/.ssh/id_ecdsa,~/.ssh/id_ed25519,~/.ssh/id_rsa"
 	defaultMaxAgent      = 50
@@ -25,6 +24,34 @@ const (
 
 // nolint: gochecknoglobals
 var (
+	defaultMacsFlags = []string{
+		ssh.InsecureHMACSHA196,
+		ssh.HMACSHA1,
+		ssh.HMACSHA256ETM,
+		ssh.HMACSHA512ETM,
+		ssh.HMACSHA256,
+		ssh.HMACSHA512,
+	}
+	defaultKexAlgos = []string{
+		ssh.InsecureKeyExchangeDH1SHA1,
+		ssh.InsecureKeyExchangeDH14SHA1,
+		ssh.InsecureKeyExchangeDHGEXSHA1,
+		ssh.KeyExchangeMLKEM768X25519,
+		ssh.KeyExchangeCurve25519,
+		ssh.KeyExchangeECDHP256,
+		ssh.KeyExchangeECDHP384,
+		ssh.KeyExchangeECDHP521,
+		ssh.KeyExchangeDH14SHA256,
+	}
+	defaultCiphersFlags = []string{
+		ssh.InsecureCipherRC4256,
+		ssh.CipherAES128GCM,
+		ssh.CipherAES256GCM,
+		ssh.CipherChaCha20Poly1305,
+		ssh.CipherAES128CTR,
+		ssh.CipherAES192CTR,
+		ssh.CipherAES256CTR,
+	}
 	version = "dev"
 	commit  = "none"
 	date    = "unknown"
@@ -32,9 +59,9 @@ var (
 )
 
 func newConfig() *pssh.Config {
-	kexFlag := defaultKexFlags
-	ciphersFlag := defaultCiphersFlags
-	macsFlag := defaultMacsFlags
+	kexAlgos := strings.Join(defaultKexAlgos, ",")
+	ciphersFlag := strings.Join(defaultCiphersFlags, ",")
+	macsFlag := strings.Join(defaultMacsFlags, ",")
 	identityFiles := defaultIdentityFiles
 	c := pssh.Config{
 		Concurrency:   0,
@@ -59,19 +86,19 @@ func newConfig() *pssh.Config {
 	flag.BoolVar(&c.IgnoreHostKey, "k", c.IgnoreHostKey, "Do not check the host key")
 	flag.BoolVar(&c.Debug, "debug", c.Debug, "debug outputs")
 	flag.DurationVar(&c.Timeout, "timeout", c.Timeout, "maximum amount of time for the TCP connection to establish.")
-	flag.StringVar(&kexFlag, "kex", kexFlag, "allowed key exchanges algorithms")
+	flag.StringVar(&kexAlgos, "kex", kexAlgos, "allowed key exchanges algorithms")
 	flag.StringVar(&ciphersFlag, "ciphers", ciphersFlag, "allowed cipher algorithms")
 	flag.StringVar(&macsFlag, "macs", macsFlag, "allowed MAC algorithms")
 	flag.StringVar(&identityFiles, "i", identityFiles, "identity files")
 	flag.Parse()
-	c.Kex = pssh.ToSlice(kexFlag)
+	c.Kex = pssh.ToSlice(kexAlgos)
 	c.Ciphers = pssh.ToSlice(ciphersFlag)
 	c.Macs = pssh.ToSlice(macsFlag)
 	c.IdentityFileOnly = identityFiles != defaultIdentityFiles
 	c.IdentFiles = pssh.ToSlice(identityFiles)
 
 	// see: https://qiita.com/tanksuzuki/items/e712717675faf4efb07a#パイプで渡された時だけ処理する
-	c.StdinFlag = !terminal.IsTerminal(0)
+	c.StdinFlag = !term.IsTerminal(0)
 	return &c
 }
 
