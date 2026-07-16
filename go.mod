@@ -1,8 +1,8 @@
 module github.com/masahide/gopssh
 
-go 1.25.0
+go 1.26.5
 
-toolchain go1.25.3
+toolchain go1.26.5
 
 require (
 	github.com/cenkalti/backoff v2.2.1+incompatible
