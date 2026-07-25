@@ -1,0 +1,424 @@
+package main
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"errors"
+	"io"
+	"os"
+	"path/filepath"
+	"reflect"
+	"strings"
+	"testing"
+
+	"github.com/masahide/gopssh/pkg/pssh"
+)
+
+func executeForTest(t *testing.T, args ...string) (int, string, string) {
+	t.Helper()
+	var stdout, stderr bytes.Buffer
+	code := executeModern(context.Background(), args, strings.NewReader("unrequested stdin"), &stdout, &stderr)
+	return code, stdout.String(), stderr.String()
+}
+
+func TestModernDispatch(t *testing.T) {
+	tests := []struct {
+		args []string
+		want bool
+	}{
+		{[]string{}, false},
+		{[]string{"run"}, true},
+		{[]string{"--json", "doctor"}, true},
+		{[]string{"--help"}, true},
+		{[]string{"hosst"}, true},
+		{[]string{"-h", "hosts", "run"}, false},
+		{[]string{"--debug", "-h", "hosts", "doctor"}, false},
+		{[]string{"--version"}, false},
+	}
+	for _, test := range tests {
+		if got := isModern(test.args); got != test.want {
+			t.Errorf("isModern(%q)=%t, want %t", test.args, got, test.want)
+		}
+	}
+}
+
+func TestTopHelpDiscoversCommands(t *testing.T) {
+	code, stdout, stderr := executeForTest(t, "--help")
+	if code != 0 || stderr != "" {
+		t.Fatalf("code=%d stderr=%q", code, stderr)
+	}
+	for _, command := range []string{"run", "doctor", "hosts", "config", "version", "completion", "Legacy syntax"} {
+		if !strings.Contains(stdout, command) {
+			t.Errorf("help missing %q", command)
+		}
+	}
+}
+
+func TestExplicitAndErrorHelpDestinations(t *testing.T) {
+	code, stdout, stderr := executeForTest(t, "hosts", "--help")
+	if code != 0 || stdout == "" || stderr != "" {
+		t.Fatalf("explicit help code=%d stdout=%q stderr=%q", code, stdout, stderr)
+	}
+	code, stdout, stderr = executeForTest(t, "hosts")
+	if code != 2 || stdout != "" || !strings.Contains(stderr, "gopssh hosts <command>") {
+		t.Fatalf("error help code=%d stdout=%q stderr=%q", code, stdout, stderr)
+	}
+	if strings.Count(stderr, "Run 'gopssh hosts --help'") != 1 {
+		t.Fatalf("error help rendered more than once: %q", stderr)
+	}
+}
+
+func TestUnknownCommandSuggestionAndJSONError(t *testing.T) {
+	code, stdout, stderr := executeForTest(t, "--json", "hosts", "lsit")
+	if code != 2 || !strings.Contains(stderr, `Did you mean "list"`) {
+		t.Fatalf("code=%d stderr=%q", code, stderr)
+	}
+	var envelope usageEnvelope
+	if err := json.Unmarshal([]byte(stdout), &envelope); err != nil {
+		t.Fatalf("stdout is not one JSON object: %q: %v", stdout, err)
+	}
+	if envelope.Error.Code != "unknown_subcommand" ||
+		envelope.Error.HelpCommand != "gopssh hosts --help" ||
+		!reflect.DeepEqual(envelope.Error.Suggestions, []string{"list"}) {
+		t.Fatalf("error=%+v", envelope.Error)
+	}
+}
+
+func TestLowConfidenceUnknownCommandHasNoSuggestion(t *testing.T) {
+	code, _, stderr := executeForTest(t, "completely-unrelated")
+	if code != 2 {
+		t.Fatalf("code=%d", code)
+	}
+	if strings.Contains(stderr, "Did you mean") {
+		t.Fatalf("unexpected suggestion: %q", stderr)
+	}
+}
+
+func TestRunDryRunPreservesTargetOrderAndArgumentBoundaries(t *testing.T) {
+	hostsFile := filepath.Join(t.TempDir(), "hosts")
+	if err := os.WriteFile(hostsFile, []byte("host1\n[::1]:2200\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	code, stdout, stderr := executeForTest(t,
+		"run", "--json", "--dry-run", "--hosts-file", hostsFile, "--host", "host2",
+		"--", "printf", "%s\n", "hello world", "a'b",
+	)
+	if code != 0 || stderr != "" {
+		t.Fatalf("code=%d stderr=%q", code, stderr)
+	}
+	var plan struct {
+		Targets []string `json:"targets"`
+		Command string   `json:"command"`
+	}
+	if err := json.Unmarshal([]byte(stdout), &plan); err != nil {
+		t.Fatal(err)
+	}
+	wantTargets := []string{"host1:22", "[::1]:2200", "host2:22"}
+	if !reflect.DeepEqual(plan.Targets, wantTargets) {
+		t.Errorf("targets=%v, want %v", plan.Targets, wantTargets)
+	}
+	if want := "'printf' '%s\n' 'hello world' 'a'\"'\"'b'"; plan.Command != want {
+		t.Errorf("command=%q, want %q", plan.Command, want)
+	}
+}
+
+func TestRunCommandSourcesAreExclusive(t *testing.T) {
+	code, stdout, stderr := executeForTest(t,
+		"run", "--json", "--host", "host1", "--command", "uptime", "--", "date",
+	)
+	if code != 2 || !strings.Contains(stderr, "mutually exclusive") {
+		t.Fatalf("code=%d stderr=%q", code, stderr)
+	}
+	var value map[string]any
+	if err := json.Unmarshal([]byte(stdout), &value); err != nil {
+		t.Fatalf("invalid JSON: %v", err)
+	}
+}
+
+type trackingReader struct {
+	reads int
+}
+
+func (r *trackingReader) Read([]byte) (int, error) {
+	r.reads++
+	return 0, io.EOF
+}
+
+func TestModernRunDoesNotReadStdinUnlessRequested(t *testing.T) {
+	reader := &trackingReader{}
+	var stdout, stderr bytes.Buffer
+	code := executeModern(context.Background(),
+		[]string{"run", "--dry-run", "--host", "host1", "--", "uptime"},
+		reader, &stdout, &stderr,
+	)
+	if code != 0 || reader.reads != 0 {
+		t.Fatalf("code=%d stdin reads=%d stderr=%q", code, reader.reads, stderr.String())
+	}
+}
+
+func TestRunRequiresTargetsAndCommand(t *testing.T) {
+	for _, args := range [][]string{
+		{"run", "--", "uptime"},
+		{"run", "--host", "host1"},
+	} {
+		code, _, stderr := executeForTest(t, args...)
+		if code != 2 || !strings.Contains(stderr, "Usage:") {
+			t.Errorf("args=%v code=%d stderr=%q", args, code, stderr)
+		}
+	}
+}
+
+func TestRunJSONConnectionFailureAndExitPolicies(t *testing.T) {
+	target := "127.0.0.1:1"
+	for _, test := range []struct {
+		policy string
+		code   int
+	}{
+		{"first", 255},
+		{"any", 1},
+		{"always-zero", 0},
+	} {
+		t.Run(test.policy, func(t *testing.T) {
+			code, stdout, _ := executeForTest(t,
+				"run", "--json", "--insecure-ignore-host-key", "--exit-policy", test.policy,
+				"--host", target, "--", "uptime",
+			)
+			if code != test.code {
+				t.Fatalf("code=%d, want %d; stdout=%q", code, test.code, stdout)
+			}
+			lines := strings.Split(strings.TrimSpace(stdout), "\n")
+			if len(lines) != 2 {
+				t.Fatalf("NDJSON lines=%d, want 2: %q", len(lines), stdout)
+			}
+			var result, summary map[string]any
+			if err := json.Unmarshal([]byte(lines[0]), &result); err != nil {
+				t.Fatal(err)
+			}
+			if err := json.Unmarshal([]byte(lines[1]), &summary); err != nil {
+				t.Fatal(err)
+			}
+			if result["type"] != "result" || result["status"] != "connection_failed" ||
+				summary["type"] != "summary" || int(summary["aggregate_exit_code"].(float64)) != test.code {
+				t.Fatalf("result=%v summary=%v", result, summary)
+			}
+		})
+	}
+}
+
+func TestRunJSONPreflightErrorIsSingleObject(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	code, stdout, stderr := executeForTest(t, "run", "--json", "--host", "host1", "--", "uptime")
+	if code != 1 || stderr != "" {
+		t.Fatalf("code=%d stderr=%q", code, stderr)
+	}
+	var payload struct {
+		OK    bool         `json:"ok"`
+		Error commandError `json:"error"`
+	}
+	if err := json.Unmarshal([]byte(stdout), &payload); err != nil {
+		t.Fatalf("invalid JSON %q: %v", stdout, err)
+	}
+	if payload.OK || payload.Error.Code != "known_hosts_unavailable" {
+		t.Fatalf("payload=%+v", payload)
+	}
+}
+
+func TestRunJSONCancellationEmitsResultsAndSignalSummary(t *testing.T) {
+	ctx, cancel := context.WithCancelCause(context.Background())
+	cancel(errors.New("received signal: terminated"))
+	var stdout, stderr bytes.Buffer
+	code := executeModern(ctx, []string{
+		"run", "--json", "--insecure-ignore-host-key", "--host", "host1", "--", "uptime",
+	}, strings.NewReader(""), &stdout, &stderr)
+	if code != 143 {
+		t.Fatalf("code=%d stdout=%q stderr=%q", code, stdout.String(), stderr.String())
+	}
+	lines := strings.Split(strings.TrimSpace(stdout.String()), "\n")
+	if len(lines) != 2 {
+		t.Fatalf("lines=%d, want result and summary: %q", len(lines), stdout.String())
+	}
+	var result, summary map[string]any
+	if err := json.Unmarshal([]byte(lines[0]), &result); err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal([]byte(lines[1]), &summary); err != nil {
+		t.Fatal(err)
+	}
+	if result["status"] != "canceled" || int(summary["aggregate_exit_code"].(float64)) != 143 {
+		t.Fatalf("result=%v summary=%v", result, summary)
+	}
+}
+
+func TestUnknownOptionWithTrailingJSONKeepsStdoutMachineReadable(t *testing.T) {
+	code, stdout, _ := executeForTest(t, "run", "--paralel", "2", "--json")
+	if code != 2 {
+		t.Fatalf("code=%d", code)
+	}
+	var payload usageEnvelope
+	if err := json.Unmarshal([]byte(stdout), &payload); err != nil {
+		t.Fatalf("invalid JSON %q: %v", stdout, err)
+	}
+	if payload.Error.Code != "unknown_option" {
+		t.Fatalf("error=%+v", payload.Error)
+	}
+}
+
+func TestHostsListAndValidate(t *testing.T) {
+	hostsFile := filepath.Join(t.TempDir(), "hosts")
+	data := "# comment\nhost1 127.0.0.1\n::1\nhost1\nhost:65536\nbad!\n"
+	if err := os.WriteFile(hostsFile, []byte(data), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	code, stdout, _ := executeForTest(t, "--json", "hosts", "list", "--file", hostsFile)
+	if code != 1 {
+		t.Fatalf("list code=%d stdout=%q", code, stdout)
+	}
+	var payload struct {
+		Entries []hostEntry `json:"entries"`
+	}
+	if err := json.Unmarshal([]byte(stdout), &payload); err != nil {
+		t.Fatal(err)
+	}
+	if len(payload.Entries) != 6 || !payload.Entries[3].Duplicate ||
+		payload.Entries[4].Error == "" || payload.Entries[5].Error == "" {
+		t.Fatalf("entries=%+v", payload.Entries)
+	}
+
+	validFile := filepath.Join(t.TempDir(), "valid-hosts")
+	if err := os.WriteFile(validFile, []byte("host1\nhost1\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	code, _, _ = executeForTest(t, "hosts", "validate", "--file", validFile)
+	if code != 0 {
+		t.Errorf("duplicate warning code=%d, want 0", code)
+	}
+	code, _, _ = executeForTest(t, "hosts", "validate", "--strict", "--file", validFile)
+	if code != 1 {
+		t.Errorf("strict duplicate code=%d, want 1", code)
+	}
+}
+
+func TestDoctorJSONIsProducedOnFailure(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("SSH_AUTH_SOCK", "")
+	code, stdout, _ := executeForTest(t, "--json", "doctor", "--identities-only")
+	if code != 1 {
+		t.Fatalf("code=%d stdout=%q", code, stdout)
+	}
+	var payload struct {
+		SchemaVersion string        `json:"schema_version"`
+		OK            bool          `json:"ok"`
+		Checks        []doctorCheck `json:"checks"`
+	}
+	if err := json.Unmarshal([]byte(stdout), &payload); err != nil {
+		t.Fatal(err)
+	}
+	if payload.SchemaVersion != schemaVersion || payload.OK || len(payload.Checks) == 0 {
+		t.Fatalf("payload=%+v", payload)
+	}
+}
+
+func TestConfigShowDoesNotExposeIdentityContents(t *testing.T) {
+	secret := "PRIVATE-KEY-CONTENT-MUST-NOT-APPEAR"
+	identity := filepath.Join(t.TempDir(), "identity")
+	if err := os.WriteFile(identity, []byte(secret), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	code, stdout, stderr := executeForTest(t, "--json", "config", "show")
+	if code != 0 || stderr != "" || strings.Contains(stdout, secret) {
+		t.Fatalf("code=%d stdout=%q stderr=%q", code, stdout, stderr)
+	}
+}
+
+type bytesResultOutput []byte
+
+func (output bytesResultOutput) WriteTo(writer io.Writer) (int64, error) {
+	n, err := writer.Write(output)
+	return int64(n), err
+}
+
+func (output bytesResultOutput) Size() int64 { return int64(len(output)) }
+
+func TestJSONResultUTF8AndBase64(t *testing.T) {
+	tests := []struct {
+		name   string
+		stdout []byte
+		field  string
+	}{
+		{"utf8", []byte("hello\n世界"), "stdout"},
+		{"base64", []byte{0xff, 0x00}, "stdout_base64"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			var output bytes.Buffer
+			result := &pssh.Result{
+				Index: 0, Target: "host:22", Stdout: bytesResultOutput(test.stdout),
+				Stderr: bytesResultOutput{}, ExitCode: 0,
+			}
+			if err := writeJSONResult(&output, result, ""); err != nil {
+				t.Fatal(err)
+			}
+			var record map[string]any
+			if err := json.Unmarshal(output.Bytes(), &record); err != nil {
+				t.Fatalf("invalid JSON %q: %v", output.String(), err)
+			}
+			if _, ok := record[test.field]; !ok {
+				t.Fatalf("record=%v, missing %s", record, test.field)
+			}
+		})
+	}
+}
+
+func TestOutputDirectoryPermissionsAndBytes(t *testing.T) {
+	directory := filepath.Join(t.TempDir(), "results")
+	result := &pssh.Result{
+		Index: 2, Target: "[::1]:22", ExitCode: 0,
+		Stdout: bytesResultOutput("stdout"), Stderr: bytesResultOutput("stderr"),
+	}
+	var output bytes.Buffer
+	if err := writeJSONResult(&output, result, directory); err != nil {
+		t.Fatal(err)
+	}
+	var record struct {
+		StdoutPath  string `json:"stdout_path"`
+		StderrPath  string `json:"stderr_path"`
+		StdoutBytes int64  `json:"stdout_bytes"`
+		StderrBytes int64  `json:"stderr_bytes"`
+	}
+	if err := json.Unmarshal(output.Bytes(), &record); err != nil {
+		t.Fatal(err)
+	}
+	if record.StdoutBytes != 6 || record.StderrBytes != 6 {
+		t.Fatalf("record=%+v", record)
+	}
+	for _, path := range []string{record.StdoutPath, record.StderrPath} {
+		info, err := os.Stat(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if info.Mode().Perm() != 0o600 {
+			t.Errorf("%s mode=%o", path, info.Mode().Perm())
+		}
+	}
+	if err := os.Chmod(record.StdoutPath, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := writeOutputFiles(directory, result); err != nil {
+		t.Fatal(err)
+	}
+	stdoutInfo, err := os.Stat(record.StdoutPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stdoutInfo.Mode().Perm() != 0o600 {
+		t.Errorf("overwritten stdout mode=%o", stdoutInfo.Mode().Perm())
+	}
+	info, err := os.Stat(directory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm() != 0o700 {
+		t.Errorf("directory mode=%o", info.Mode().Perm())
+	}
+}

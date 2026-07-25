@@ -48,6 +48,6 @@ clean:
 .PHONY: clean
 
 $(BIN):
-	go build -o $@ $(MAIN)/main.go
+	go build -o $@ $(MAIN)
 
 .DEFAULT_GOAL := build

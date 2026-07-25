@@ -272,6 +272,37 @@ func TestColorPrinterDoesNotColorNonTerminalWriter(t *testing.T) {
 	}
 }
 
+func TestColorPolicyEnvironment(t *testing.T) {
+	t.Setenv("NO_COLOR", "")
+	t.Setenv("TERM", "xterm-256color")
+	if !shouldEnableColor(true) {
+		t.Fatal("terminal with color support must enable color")
+	}
+	t.Setenv("NO_COLOR", "1")
+	if shouldEnableColor(true) {
+		t.Fatal("NO_COLOR must disable color")
+	}
+	t.Setenv("NO_COLOR", "")
+	t.Setenv("TERM", "dumb")
+	if shouldEnableColor(true) {
+		t.Fatal("TERM=dumb must disable color")
+	}
+	if shouldEnableColor(false) {
+		t.Fatal("non-terminal output must disable color")
+	}
+}
+
+func TestColorAlwaysOverridesNonTerminal(t *testing.T) {
+	var output bytes.Buffer
+	printer := newColorPrinterPolicy(color.New(color.FgRed), &output, true)
+	if _, err := printer.Print("error"); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(output.String(), "\x1b[31m") {
+		t.Fatalf("forced color output=%q", output.String())
+	}
+}
+
 func TestValidate(t *testing.T) {
 	valid := Config{
 		Concurrency:     DefaultConcurrency,
@@ -299,6 +330,64 @@ func TestValidate(t *testing.T) {
 	}
 	if err := (&Pssh{Config: &valid}).Validate(); err != nil {
 		t.Fatalf("Validate() error=%v", err)
+	}
+}
+
+func TestResultHandlerStreamsSpilledOutput(t *testing.T) {
+	var got bytes.Buffer
+	config := &Config{
+		Concurrency:     1,
+		MaxAgentConns:   1,
+		MaxBufferMemory: outputChunkSize,
+		MaxSpoolSize:    4 * outputChunkSize,
+		SpoolDir:        t.TempDir(),
+		ResultHandler: func(result *Result) error {
+			if result.Target != "host1:22" || result.Index != 0 {
+				t.Errorf("result=%+v", result)
+			}
+			_, err := result.Stdout.WriteTo(&got)
+			return err
+		},
+	}
+	p := &Pssh{Config: config}
+	p.Init()
+	data := bytes.Repeat([]byte("json-stream-output"), int(3*outputChunkSize)/len("json-stream-output"))
+	result := p.newResult(0, 0)
+	if _, err := result.stdout.Write(data); err != nil {
+		t.Fatal(err)
+	}
+	if err := p.emitResult(result, "host1:22"); err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(got.Bytes(), data) {
+		t.Fatalf("streamed bytes=%d, want %d", got.Len(), len(data))
+	}
+	if p.outputSpool.Used() == 0 {
+		t.Fatal("output did not spill to disk")
+	}
+	if err := p.delReslt(result); err != nil {
+		t.Fatal(err)
+	}
+	if p.outputMemory.Used() != 0 || p.outputSpool.Used() != 0 {
+		t.Fatalf("budgets after cleanup: memory=%d spool=%d", p.outputMemory.Used(), p.outputSpool.Used())
+	}
+}
+
+func TestAggregateExitPolicies(t *testing.T) {
+	for _, test := range []struct {
+		policy string
+		input  int
+		want   int
+	}{
+		{"", 23, 23},
+		{"first", 255, 255},
+		{"any", 23, 1},
+		{"always-zero", 23, 0},
+	} {
+		p := &Pssh{Config: &Config{ExitPolicy: test.policy}}
+		if got := p.aggregateCode(0, test.input); got != test.want {
+			t.Errorf("policy=%q aggregate=%d, want %d", test.policy, got, test.want)
+		}
 	}
 }
 

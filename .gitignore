@@ -23,7 +23,8 @@ _cgo_export.*
 *.test
 *.prof
 
-gopssh
+/gopssh
+/cmd/gopssh/gopssh
 vendor
 coverage.txt
 *coverage.txt

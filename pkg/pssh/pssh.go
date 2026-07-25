@@ -67,20 +67,24 @@ func ToSlice(s string) []string {
 }
 
 func newPrint(stdout, stderr io.Writer, colorMode bool) *print {
+	return newPrintPolicy(stdout, stderr, colorMode, false)
+}
+
+func newPrintPolicy(stdout, stderr io.Writer, colorMode, colorAlways bool) *print {
 	p := &print{
 		colorMode: colorMode,
 		stdout:    stdout,
 		stderr:    stderr,
 	}
-	p.init()
+	p.init(colorAlways)
 	return p
 }
 
-func (p *print) init() {
+func (p *print) init(colorAlways bool) {
 	if p.colorMode {
-		p.red = newColorPrinter(color.New(color.FgRed), p.stderr)
-		p.boldRed = newColorPrinter(color.New(color.FgRed).Add(color.Bold), p.stderr)
-		p.green = newColorPrinter(color.New(color.FgGreen), p.stdout)
+		p.red = newColorPrinterPolicy(color.New(color.FgRed), p.stderr, colorAlways)
+		p.boldRed = newColorPrinterPolicy(color.New(color.FgRed).Add(color.Bold), p.stderr, colorAlways)
+		p.green = newColorPrinterPolicy(color.New(color.FgGreen), p.stdout, colorAlways)
 		return
 	}
 	p.red = writerPrinter{p.stderr}
@@ -105,6 +109,14 @@ type colorPrinter struct {
 }
 
 func newColorPrinter(c *color.Color, writer io.Writer) colorPrinter {
+	return newColorPrinterPolicy(c, writer, false)
+}
+
+func newColorPrinterPolicy(c *color.Color, writer io.Writer, always bool) colorPrinter {
+	if always {
+		c.EnableColor()
+		return colorPrinter{color: c, writer: writer}
+	}
 	file, ok := writer.(*os.File)
 	if !ok || file == nil {
 		c.DisableColor()
@@ -112,7 +124,7 @@ func newColorPrinter(c *color.Color, writer io.Writer) colorPrinter {
 	}
 
 	isTerminal := isatty.IsTerminal(file.Fd()) || isatty.IsCygwinTerminal(file.Fd())
-	if isTerminal && os.Getenv("NO_COLOR") == "" && os.Getenv("TERM") != "dumb" {
+	if shouldEnableColor(isTerminal) {
 		c.EnableColor()
 	} else {
 		c.DisableColor()
@@ -122,6 +134,10 @@ func newColorPrinter(c *color.Color, writer io.Writer) colorPrinter {
 		color:  c,
 		writer: colorable.NewColorable(file),
 	}
+}
+
+func shouldEnableColor(isTerminal bool) bool {
+	return isTerminal && os.Getenv("NO_COLOR") == "" && os.Getenv("TERM") != "dumb"
 }
 
 func (p colorPrinter) Print(a ...interface{}) (n int, err error) {
@@ -214,6 +230,24 @@ type Pssh struct {
 	conns                *connPools
 }
 
+// ResultOutput is a replayable, bounded-memory remote output stream.
+// Callers must not retain it after ResultHandler returns.
+type ResultOutput interface {
+	WriteTo(io.Writer) (int64, error)
+	Size() int64
+}
+
+// Result is the result of one target execution.
+type Result struct {
+	Index    int
+	Target   string
+	ExitCode int
+	Err      error
+	Stdout   ResultOutput
+	Stderr   ResultOutput
+	Duration time.Duration
+}
+
 // Config pssh config
 type Config struct {
 	Concurrency      int
@@ -239,6 +273,17 @@ type Config struct {
 	Kex     []string
 	Ciphers []string
 	Macs    []string
+
+	// The fields below are optional injection points used by the modern CLI.
+	// Empty values preserve the legacy flag/os package behavior.
+	Targets       []string
+	Command       string
+	Stdin         []byte
+	Stdout        io.Writer
+	Stderr        io.Writer
+	ResultHandler func(*Result) error
+	ExitPolicy    string
+	ColorAlways   bool
 }
 
 // Init Pssh
@@ -248,7 +293,14 @@ func (p *Pssh) Init() {
 		concurrency = 0
 	}
 	p.concurrentGoroutines = make(chan struct{}, concurrency)
-	p.print = newPrint(os.Stdout, os.Stderr, p.ColorMode)
+	stdout, stderr := p.Stdout, p.Stderr
+	if stdout == nil {
+		stdout = os.Stdout
+	}
+	if stderr == nil {
+		stderr = os.Stderr
+	}
+	p.print = newPrintPolicy(stdout, stderr, p.ColorMode, p.ColorAlways)
 	p.sshDialer = sshDial{}
 	p.identFileData = p.readIdentFiles()
 	p.prepareOutputStorage()
@@ -287,6 +339,8 @@ type result struct {
 	err       error
 	stdout    resultOutput
 	stderr    resultOutput
+	started   time.Time
+	duration  time.Duration
 }
 
 func (p *Pssh) newResult(conID, sessionID int) *result {
@@ -295,6 +349,7 @@ func (p *Pssh) newResult(conID, sessionID int) *result {
 		sessionID: sessionID,
 		stdout:    newSpillBuffer(p.outputMemory, p.outputSpool, p.createOutputSpoolFile),
 		stderr:    newSpillBuffer(p.outputMemory, p.outputSpool, p.createOutputSpoolFile),
+		started:   time.Now(),
 	}
 }
 
@@ -369,6 +424,11 @@ func readHosts(fileName string) ([]string, error) {
 	return result, nil
 }
 
+// ReadHosts reads and normalizes the legacy hosts-file format.
+func ReadHosts(fileName string) ([]string, error) {
+	return readHosts(fileName)
+}
+
 func normalizeHost(value string) (string, error) {
 	if host, port, err := net.SplitHostPort(value); err == nil {
 		if host == "" || port == "" {
@@ -399,6 +459,11 @@ func normalizeHost(value string) (string, error) {
 	return net.JoinHostPort(value, "22"), nil
 }
 
+// NormalizeHost normalizes a target and supplies the default SSH port.
+func NormalizeHost(value string) (string, error) {
+	return normalizeHost(value)
+}
+
 func getHostKeyCallback(insecure bool) (ssh.HostKeyCallback, error) {
 	if insecure {
 		// nolint: gosec
@@ -410,6 +475,12 @@ func getHostKeyCallback(insecure bool) (ssh.HostKeyCallback, error) {
 		return nil, pkgerrors.Wrap(err, "knownhosts.New")
 	}
 	return cb, nil
+}
+
+// ValidateHostKeyPolicy verifies that the configured host-key policy can be loaded.
+func ValidateHostKeyPolicy(insecure bool) error {
+	_, err := getHostKeyCallback(insecure)
+	return err
 }
 
 func (p *Pssh) newConWork(id int, host string) *conWork {
@@ -441,11 +512,15 @@ func (p *Pssh) RunContext(parent context.Context) int {
 			log.Printf("cleanup output spool err: %s", err)
 		}
 	}()
-	hosts, err := readHosts(p.Hostsfile)
-	if err != nil {
-		// nolint: errcheck,gosec
-		log.Printf("read hosts file err: %s", err)
-		return one
+	hosts := p.Targets
+	if hosts == nil {
+		var err error
+		hosts, err = readHosts(p.Hostsfile)
+		if err != nil {
+			// nolint: errcheck,gosec
+			log.Printf("read hosts file err: %s", err)
+			return one
+		}
 	}
 	hc, err := getHostKeyCallback(p.IgnoreHostKey)
 	if err != nil {
@@ -472,15 +547,19 @@ func (p *Pssh) RunContext(parent context.Context) int {
 	p.workerWG.Add(len(p.cws))
 	go p.launchConWorkers(ctx)
 
-	stdin := []byte{}
-	if p.StdinFlag {
+	stdin := p.Stdin
+	if stdin == nil && p.StdinFlag {
 		if stdin, err = io.ReadAll(os.Stdin); err != nil {
 			log.Fatal(err)
 		}
 	}
+	command := p.Command
+	if command == "" {
+		command = strings.Join(flag.Args(), " ")
+	}
 	results := make(chan *result, len(hosts))
 	in := input{
-		command: strings.Join(flag.Args(), " "),
+		command: command,
 		stdin:   string(stdin),
 		results: results,
 	}
@@ -492,6 +571,36 @@ func (p *Pssh) RunContext(parent context.Context) int {
 	p.workerWG.Wait()
 
 	return code
+}
+
+// ProbeContext performs TCP connection, SSH handshake, host-key verification,
+// and authentication for one target without creating a remote session.
+func (p *Pssh) ProbeContext(ctx context.Context, target string) error {
+	if err := p.Validate(); err != nil {
+		return err
+	}
+	hostKeyCallback, err := getHostKeyCallback(p.IgnoreHostKey)
+	if err != nil {
+		return err
+	}
+	p.setConnPool()
+	p.identFileData = p.readIdentFiles()
+	config := ssh.ClientConfig{
+		User:            p.User,
+		Timeout:         p.Timeout,
+		HostKeyCallback: hostKeyCallback,
+		Config:          ssh.Config{KeyExchanges: p.Kex, Ciphers: p.Ciphers, MACs: p.Macs},
+	}
+	config.Auth = p.mergeAuthMethods(p.getIdentFileAuthMethods(p.identFileData))
+	dialer := p.sshDialer
+	if dialer == nil {
+		dialer = sshDial{}
+	}
+	connection, err := dialer.DialContext(ctx, "tcp", target, &config)
+	if err != nil {
+		return err
+	}
+	return connection.Close()
 }
 
 func (p *Pssh) runConWorkers(ctx context.Context) int {
@@ -543,10 +652,8 @@ func (p *Pssh) printSortResults(ctx context.Context, results chan *result, cws [
 				if resSlise[j] == nil {
 					break L1
 				}
-				printErr := p.printResult(resSlise[j], cws[resSlise[j].conID].host)
-				if firstCode == 0 && resSlise[j].code != 0 {
-					firstCode = resSlise[j].code
-				}
+				printErr := p.emitResult(resSlise[j], cws[resSlise[j].conID].host)
+				firstCode = p.aggregateCode(firstCode, resSlise[j].code)
 				if firstCode == 0 && printErr != nil {
 					firstCode = one
 				}
@@ -576,10 +683,8 @@ func (p *Pssh) printResults(ctx context.Context, results chan *result, cws []*co
 	for i := 0; i < len(cws); i++ {
 		select {
 		case res := <-results:
-			printErr := p.printResult(res, cws[res.conID].host)
-			if firstCode == 0 && res.code != 0 {
-				firstCode = res.code
-			}
+			printErr := p.emitResult(res, cws[res.conID].host)
+			firstCode = p.aggregateCode(firstCode, res.code)
 			if firstCode == 0 && printErr != nil {
 				firstCode = one
 			}
@@ -591,6 +696,38 @@ func (p *Pssh) printResults(ctx context.Context, results chan *result, cws []*co
 		}
 	}
 	return firstCode
+}
+
+func (p *Pssh) aggregateCode(current, resultCode int) int {
+	if current != 0 || resultCode == 0 {
+		return current
+	}
+	switch p.ExitPolicy {
+	case "any":
+		return one
+	case "always-zero":
+		return 0
+	default:
+		return resultCode
+	}
+}
+
+func (p *Pssh) emitResult(res *result, host string) error {
+	if res.duration == 0 {
+		res.duration = time.Since(res.started)
+	}
+	if p.ResultHandler == nil {
+		return p.printResult(res, host)
+	}
+	return p.ResultHandler(&Result{
+		Index:    res.conID,
+		Target:   host,
+		ExitCode: res.code,
+		Err:      res.err,
+		Stdout:   res.stdout,
+		Stderr:   res.stderr,
+		Duration: res.duration,
+	})
 }
 
 func (p *Pssh) printResult(res *result, host string) error {

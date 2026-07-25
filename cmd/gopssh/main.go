@@ -213,6 +213,24 @@ func checkFlag(w io.Writer) (ret int, exit bool) {
 }
 
 func main() {
+	if isModern(os.Args[1:]) {
+		log.SetFlags(0)
+		ctx, cancel := context.WithCancelCause(context.Background())
+		signalChannel := make(chan os.Signal, 1)
+		signal.Notify(signalChannel, os.Interrupt, syscall.SIGTERM)
+		defer signal.Stop(signalChannel)
+		go func() {
+			select {
+			case received := <-signalChannel:
+				cancel(fmt.Errorf("received signal: %s", received))
+			case <-ctx.Done():
+			}
+		}()
+		code := executeModern(ctx, os.Args[1:], os.Stdin, os.Stdout, os.Stderr)
+		code = signalExitCode(code, context.Cause(ctx))
+		cancel(nil)
+		os.Exit(code)
+	}
 	log.SetFlags(log.LstdFlags | log.Lshortfile)
 	p := &pssh.Pssh{Config: newConfig()}
 	if ret, exit := checkFlag(os.Stdout); exit {
@@ -227,4 +245,14 @@ func main() {
 	code := p.RunContext(ctx)
 	stop()
 	os.Exit(code)
+}
+
+func signalExitCode(code int, cause error) int {
+	if cause == nil {
+		return code
+	}
+	if strings.Contains(cause.Error(), syscall.SIGTERM.String()) {
+		return 143
+	}
+	return 130
 }
