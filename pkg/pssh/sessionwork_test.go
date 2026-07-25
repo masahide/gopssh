@@ -202,6 +202,9 @@ func TestRun(t *testing.T) {
 	if r.err == nil {
 		t.Error("r.res!=nil, want:nil")
 	}
+	if r.kind != ResultRemoteExit {
+		t.Errorf("kind=%q, want %q", r.kind, ResultRemoteExit)
+	}
 }
 
 func TestOutputLimitReturnsNonzero(t *testing.T) {

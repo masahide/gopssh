@@ -80,6 +80,9 @@ SSHハンドシェイク、ホスト鍵検証、認証を試します。リモ�
 コマンド実行は行いません。
 
 終了コードは、正常なら0、必須検査の異常があれば1、引数不正なら2です。
+SSH Agentとidentity fileは代替の認証経路であり、どちらか1つが利用可能なら
+認証検査は成功します。JSONの各checkにある `required` は、そのcheckの失敗が
+doctor全体の失敗になるかを示します。
 
 ## `hosts`
 
@@ -118,13 +121,15 @@ schema major versionは `1` です。`--json` 時のstdoutにはJSON以外を出
 
 ```json
 {"schema_version":"1","type":"result","index":0,"target":"host1:22","status":"success","exit_code":0,"error":null,"duration_ms":1234,"stdout":"ok\n","stdout_encoding":"utf-8","stderr":"","stderr_encoding":"utf-8"}
-{"schema_version":"1","type":"summary","total":1,"succeeded":1,"failed":0,"connection_failed":0,"canceled":0,"aggregate_exit_code":0}
+{"schema_version":"1","type":"summary","total":1,"succeeded":1,"failed":0,"connection_failed":0,"canceled":0,"local_errors":0,"aggregate_exit_code":0}
 ```
 
 - 有効なUTF-8は `stdout` / `stderr` と `*_encoding: "utf-8"` で表します。
 - 無効なUTF-8を含む出力は `stdout_base64` / `stderr_base64` と
   `*_encoding: "base64"` で欠落なく表します。
 - 空出力は空文字です。エラーがなければ `error` は `null` です。
+- `connection_failed` は実行エンジンが接続段階の失敗と判定した場合だけです。
+  リモートコマンド自身の終了255は通常の `failed` として扱います。
 - `--order input` は入力順、`--order completion` は完了順です。
 - フィールド追加は後方互換です。削除・意味変更時はschema majorを変更します。
 
@@ -132,6 +137,9 @@ schema major versionは `1` です。`--json` 時のstdoutにはJSON以外を出
 `<index>-<sanitized-target>.stdout` / `.stderr` へ保存します。ディレクトリは
 0700、ファイルは0600です。JSON resultには絶対パスとbyte countを含め、
 インライン出力は含めません。
+ファイル保存はresultをstdoutへ書く前に完了させます。保存に失敗した場合も
+完全な `status: "output_failed"` resultを出力し、stderrへ
+`output_io_failed` を表示し、summaryの `local_errors` を加算します。
 
 実行開始前のJSONエラーは1個のJSONオブジェクトです。
 

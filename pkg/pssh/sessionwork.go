@@ -32,6 +32,7 @@ func (s *sessionWork) newResult() *result {
 func (s *sessionWork) getPipe(ctx context.Context, pipe func() (io.Reader, error), res *result, name string) (io.Reader, error) {
 	out, err := pipe()
 	if err != nil {
+		res.kind = ResultRemoteStartFailed
 		s.result(ctx, fmt.Errorf("cannot open %sPipe: %v", name, err), res)
 	}
 	return out, err
@@ -39,6 +40,9 @@ func (s *sessionWork) getPipe(ctx context.Context, pipe func() (io.Reader, error
 
 func (s *sessionWork) result(ctx context.Context, err error, res *result) {
 	res.err = err
+	if res.kind == ResultSuccess {
+		res.kind = ResultInternalFailed
+	}
 	if res.code == 0 {
 		res.code = one
 	}
@@ -69,6 +73,7 @@ func (s *sessionWork) run(ctx context.Context, res *result, session sess) {
 		{name: "I/O err:", err: nil},          // 3
 	}
 	if err = ctx.Err(); err != nil {
+		res.kind = ResultCanceled
 		errs[3].err = err
 	} else if err = session.Start(s.command); err == nil {
 		errChs := []chan error{make(chan error, 1), make(chan error, 1)}
@@ -85,6 +90,7 @@ func (s *sessionWork) run(ctx context.Context, res *result, session sess) {
 		case waitErr = <-waitCh:
 		case outputErr := <-res.stdout.Fatal():
 			interrupted = true
+			res.kind = ResultOutputFailed
 			errs[3].err = outputErr
 			if closeErr := session.Close(); closeErr != nil {
 				errs[3].err = errors.Join(errs[3].err, closeErr)
@@ -92,6 +98,7 @@ func (s *sessionWork) run(ctx context.Context, res *result, session sess) {
 			<-waitCh
 		case outputErr := <-res.stderr.Fatal():
 			interrupted = true
+			res.kind = ResultOutputFailed
 			errs[3].err = outputErr
 			if closeErr := session.Close(); closeErr != nil {
 				errs[3].err = errors.Join(errs[3].err, closeErr)
@@ -99,6 +106,7 @@ func (s *sessionWork) run(ctx context.Context, res *result, session sess) {
 			<-waitCh
 		case <-ctx.Done():
 			interrupted = true
+			res.kind = ResultCanceled
 			errs[3].err = ctx.Err()
 			if closeErr := session.Close(); closeErr != nil {
 				errs[3].err = errors.Join(errs[3].err, closeErr)
@@ -108,8 +116,10 @@ func (s *sessionWork) run(ctx context.Context, res *result, session sess) {
 		if !interrupted && waitErr != nil {
 			if ee, ok := waitErr.(*ssh.ExitError); ok {
 				errs[2].err = ee
+				res.kind = ResultRemoteExit
 				res.code = ee.ExitStatus()
 			} else {
+				res.kind = ResultInternalFailed
 				errs[3].err = waitErr
 			}
 		}
@@ -117,6 +127,7 @@ func (s *sessionWork) run(ctx context.Context, res *result, session sess) {
 			errs[i].err = <-errChs[i]
 		}
 	} else {
+		res.kind = ResultRemoteStartFailed
 		errs[3].err = err
 	}
 	stdoutOutputErr := res.stdout.Finalize()
@@ -125,11 +136,17 @@ func (s *sessionWork) run(ctx context.Context, res *result, session sess) {
 		sessErr{name: "stdout output err:", err: stdoutOutputErr},
 		sessErr{name: "stderr output err:", err: stderrOutputErr},
 	)
-	if res.code == 0 && (stdoutOutputErr != nil || stderrOutputErr != nil) {
-		res.code = one
+	if stdoutOutputErr != nil || stderrOutputErr != nil {
+		res.kind = ResultOutputFailed
+		if res.code == 0 {
+			res.code = one
+		}
 	}
 	res.err = getAllError(errs)
 	if res.code == 0 && res.err != nil {
+		if res.kind == ResultSuccess {
+			res.kind = ResultInternalFailed
+		}
 		res.code = one
 	}
 	s.errResult(ctx, res)
@@ -151,6 +168,7 @@ func (s *sessionWork) worker(ctx context.Context, conn client) {
 	res := s.newResult()
 	session, err := conn.NewSession()
 	if err != nil {
+		res.kind = ResultRemoteStartFailed
 		s.result(ctx, fmt.Errorf("cannot open new session: %v", err), res)
 		return
 	}

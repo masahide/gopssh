@@ -370,6 +370,188 @@ func TestJSONResultUTF8AndBase64(t *testing.T) {
 	}
 }
 
+func TestJSONResultEscapesAllControlCharacters(t *testing.T) {
+	controlOutput := []byte{
+		'a', 0x00, 0x07, 0x08, 0x09, 0x0a, 0x0c, 0x0d,
+		0x1b, 0x1f, 0x7f, '"', '\\', 'z',
+	}
+	var output bytes.Buffer
+	result := &pssh.Result{
+		Index: 0, Target: "host:22", Kind: pssh.ResultSuccess,
+		Stdout: bytesResultOutput(controlOutput), Stderr: bytesResultOutput{},
+	}
+	if err := writeJSONResult(&output, result, ""); err != nil {
+		t.Fatal(err)
+	}
+	if !json.Valid(output.Bytes()) {
+		t.Fatalf("invalid JSON: %q", output.String())
+	}
+	var record struct {
+		Stdout string `json:"stdout"`
+	}
+	if err := json.Unmarshal(output.Bytes(), &record); err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal([]byte(record.Stdout), controlOutput) {
+		t.Fatalf("stdout=%v, want %v", []byte(record.Stdout), controlOutput)
+	}
+}
+
+func TestRemoteExit255IsNotConnectionFailure(t *testing.T) {
+	result := &pssh.Result{
+		Index: 0, Target: "host:22", Kind: pssh.ResultRemoteExit, ExitCode: 255,
+		Stdout: bytesResultOutput{}, Stderr: bytesResultOutput{},
+	}
+	var output bytes.Buffer
+	if err := writeJSONResult(&output, result, ""); err != nil {
+		t.Fatal(err)
+	}
+	var record map[string]any
+	if err := json.Unmarshal(output.Bytes(), &record); err != nil {
+		t.Fatal(err)
+	}
+	if record["status"] != "failed" {
+		t.Fatalf("status=%v, want failed", record["status"])
+	}
+	stats := &runStats{}
+	updateRunStats(stats, result)
+	if stats.connectionFailed != 0 || stats.failed != 1 {
+		t.Fatalf("stats=%+v", stats)
+	}
+
+	result.Kind = pssh.ResultConnectionFailed
+	output.Reset()
+	if err := writeJSONResult(&output, result, ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(output.Bytes(), &record); err != nil {
+		t.Fatal(err)
+	}
+	if record["status"] != "connection_failed" {
+		t.Fatalf("status=%v, want connection_failed", record["status"])
+	}
+}
+
+func TestOutputDirectoryFailureKeepsNDJSONValid(t *testing.T) {
+	directory := t.TempDir()
+	result := &pssh.Result{
+		Index: 0, Target: "host:22", Kind: pssh.ResultSuccess,
+		Stdout: bytesResultOutput("stdout"), Stderr: bytesResultOutput("stderr"),
+	}
+	stdoutPath := filepath.Join(directory, "0-host_22.stdout")
+	if err := os.Symlink(filepath.Join(directory, "elsewhere"), stdoutPath); err != nil {
+		t.Fatal(err)
+	}
+	var stdout, stderr bytes.Buffer
+	stats := &runStats{total: 1}
+	options := runOptions{json: true, outputDir: directory}
+	if err := handleRunResult(options, stats, &stdout, &stderr, result); err == nil {
+		t.Fatal("handleRunResult() error=nil, want output failure")
+	}
+	if err := writeJSONSummary(&stdout, stats, 1); err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(strings.TrimSpace(stdout.String()), "\n")
+	if len(lines) != 2 {
+		t.Fatalf("NDJSON lines=%d, want 2: %q", len(lines), stdout.String())
+	}
+	for _, line := range lines {
+		if !json.Valid([]byte(line)) {
+			t.Fatalf("invalid NDJSON line: %q", line)
+		}
+	}
+	var failure, summary map[string]any
+	if err := json.Unmarshal([]byte(lines[0]), &failure); err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal([]byte(lines[1]), &summary); err != nil {
+		t.Fatal(err)
+	}
+	if failure["status"] != "output_failed" || failure["error_code"] != "output_io_failed" {
+		t.Fatalf("failure=%v", failure)
+	}
+	if summary["local_errors"] != float64(1) || stats.failed != 1 {
+		t.Fatalf("summary=%v stats=%+v", summary, stats)
+	}
+	if !strings.Contains(stderr.String(), "output_io_failed") {
+		t.Fatalf("stderr=%q", stderr.String())
+	}
+}
+
+func TestDoctorAuthenticationAlternatives(t *testing.T) {
+	identity := filepath.Join(t.TempDir(), "id_ed25519")
+	if err := os.WriteFile(identity, []byte("readable"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	base := defaultRunOptions()
+	base.config.User = "user"
+	base.config.IgnoreHostKey = true
+	base.config.SSHAuthSocket = ""
+	base.identities = nil
+
+	tests := []struct {
+		name   string
+		mutate func(*runOptions)
+		wantOK bool
+	}{
+		{
+			name: "identity only available",
+			mutate: func(options *runOptions) {
+				options.identities = []string{identity}
+				options.identitySet = true
+			},
+			wantOK: true,
+		},
+		{
+			name: "agent only available",
+			mutate: func(options *runOptions) {
+				options.config.SSHAuthSocket = "/agent"
+				options.agentProbe = func(string) error { return nil }
+			},
+			wantOK: true,
+		},
+		{
+			name:   "no authentication",
+			mutate: func(*runOptions) {},
+			wantOK: false,
+		},
+		{
+			name: "identities-only with identity",
+			mutate: func(options *runOptions) {
+				options.config.IdentityFileOnly = true
+				options.identities = []string{identity}
+				options.identitySet = true
+			},
+			wantOK: true,
+		},
+		{
+			name: "identities-only without identity",
+			mutate: func(options *runOptions) {
+				options.config.IdentityFileOnly = true
+			},
+			wantOK: false,
+		},
+		{
+			name: "explicit unreadable identity",
+			mutate: func(options *runOptions) {
+				options.identities = []string{filepath.Join(t.TempDir(), "missing")}
+				options.identitySet = true
+			},
+			wantOK: false,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			options := base
+			test.mutate(&options)
+			checks := doctorChecks(options, &bytes.Buffer{}, &bytes.Buffer{})
+			if got := doctorChecksOK(checks); got != test.wantOK {
+				t.Fatalf("doctorChecksOK()=%t, want %t; checks=%+v", got, test.wantOK, checks)
+			}
+		})
+	}
+}
+
 func TestOutputDirectoryPermissionsAndBytes(t *testing.T) {
 	directory := filepath.Join(t.TempDir(), "results")
 	result := &pssh.Result{

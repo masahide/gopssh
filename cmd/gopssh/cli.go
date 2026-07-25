@@ -76,6 +76,7 @@ type runOptions struct {
 	exitPolicy   string
 	legacyCrypto bool
 	identitySet  bool
+	agentProbe   func(string) error
 	kex          string
 	ciphers      string
 	macs         string
@@ -530,7 +531,7 @@ func printDryRun(options runOptions, targets []string, stdout io.Writer) int {
 }
 
 type runStats struct {
-	total, succeeded, failed, connectionFailed, canceled int
+	total, succeeded, failed, connectionFailed, canceled, localErrors int
 }
 
 func executeRun(ctx context.Context, options runOptions, targets []string, stdout, stderr io.Writer) int {
@@ -538,29 +539,7 @@ func executeRun(ctx context.Context, options runOptions, targets []string, stdou
 	seen := make(map[int]bool, len(targets))
 	handler := func(result *pssh.Result) error {
 		seen[result.Index] = true
-		switch {
-		case errors.Is(result.Err, context.Canceled):
-			stats.canceled++
-		case result.ExitCode == 255:
-			stats.connectionFailed++
-			stats.failed++
-		case result.ExitCode != 0 || result.Err != nil:
-			stats.failed++
-		default:
-			stats.succeeded++
-		}
-		if options.json {
-			return writeJSONResult(stdout, result, options.outputDir)
-		}
-		if options.outputDir != "" {
-			stdoutPath, stderrPath, err := writeOutputFiles(options.outputDir, result)
-			if err != nil {
-				return err
-			}
-			_, err = fmt.Fprintf(stdout, "%s stdout=%s stderr=%s exit_code=%d\n", result.Target, stdoutPath, stderrPath, result.ExitCode)
-			return err
-		}
-		return writeTextResult(stdout, stderr, result, options.config.ShowHostName)
+		return handleRunResult(options, stats, stdout, stderr, result)
 	}
 	if options.json || options.outputDir != "" {
 		options.config.ResultHandler = handler
@@ -577,28 +556,82 @@ func executeRun(ctx context.Context, options runOptions, targets []string, stdou
 				if seen[index] {
 					continue
 				}
-				stats.canceled++
 				canceledResult := &pssh.Result{
-					Index: index, Target: target, ExitCode: 1, Err: context.Canceled,
+					Index: index, Target: target, Kind: pssh.ResultCanceled, ExitCode: 1, Err: context.Canceled,
 					Stdout: emptyResultOutput{}, Stderr: emptyResultOutput{},
 				}
-				if err := writeJSONResult(stdout, canceledResult, options.outputDir); err != nil {
+				if err := handleRunResult(options, stats, stdout, stderr, canceledResult); err != nil && options.outputDir == "" {
 					return 1
 				}
 			}
 		}
 		code = signalExitCode(code, context.Cause(ctx))
-		summary := map[string]any{
-			"schema_version": schemaVersion, "type": "summary", "total": stats.total,
-			"succeeded": stats.succeeded, "failed": stats.failed,
-			"connection_failed": stats.connectionFailed, "canceled": stats.canceled,
-			"aggregate_exit_code": code,
-		}
-		if err := json.NewEncoder(stdout).Encode(summary); err != nil {
+		if err := writeJSONSummary(stdout, stats, code); err != nil {
 			return 1
 		}
 	}
 	return code
+}
+
+func handleRunResult(
+	options runOptions,
+	stats *runStats,
+	stdout, stderr io.Writer,
+	result *pssh.Result,
+) error {
+	if options.json {
+		if err := writeJSONResult(stdout, result, options.outputDir); err != nil {
+			stats.localErrors++
+			stats.failed++
+			_, _ = fmt.Fprintf(stderr, "Error: output_io_failed for %s: %s\n", result.Target, err)
+			if options.outputDir != "" {
+				if recordErr := writeJSONOutputFailure(stdout, result, err); recordErr != nil {
+					return errors.Join(err, recordErr)
+				}
+			}
+			return err
+		}
+		updateRunStats(stats, result)
+		return nil
+	}
+	if options.outputDir != "" {
+		stdoutPath, stderrPath, err := writeOutputFiles(options.outputDir, result)
+		if err != nil {
+			_, _ = fmt.Fprintf(stderr, "Error: output_io_failed for %s: %s\n", result.Target, err)
+			return err
+		}
+		_, err = fmt.Fprintf(stdout, "%s stdout=%s stderr=%s exit_code=%d\n", result.Target, stdoutPath, stderrPath, result.ExitCode)
+		return err
+	}
+	return writeTextResult(stdout, stderr, result, options.config.ShowHostName)
+}
+
+func writeJSONSummary(writer io.Writer, stats *runStats, code int) error {
+	return json.NewEncoder(writer).Encode(map[string]any{
+		"schema_version":      schemaVersion,
+		"type":                "summary",
+		"total":               stats.total,
+		"succeeded":           stats.succeeded,
+		"failed":              stats.failed,
+		"connection_failed":   stats.connectionFailed,
+		"canceled":            stats.canceled,
+		"local_errors":        stats.localErrors,
+		"aggregate_exit_code": code,
+	})
+}
+
+func updateRunStats(stats *runStats, result *pssh.Result) {
+	switch resultStatus(result) {
+	case string(pssh.ResultCanceled):
+		stats.canceled++
+	case string(pssh.ResultConnectionFailed):
+		stats.connectionFailed++
+		stats.failed++
+	case "success":
+		stats.succeeded++
+	default:
+		stats.failed++
+	}
 }
 
 type emptyResultOutput struct{}
@@ -690,14 +723,7 @@ func sanitizeTarget(target string) string {
 }
 
 func writeJSONResult(writer io.Writer, result *pssh.Result, outputDir string) error {
-	status := "success"
-	if errors.Is(result.Err, context.Canceled) {
-		status = "canceled"
-	} else if result.ExitCode == 255 {
-		status = "connection_failed"
-	} else if result.ExitCode != 0 || result.Err != nil {
-		status = "failed"
-	}
+	status := resultStatus(result)
 	errorMessage := any(nil)
 	if result.Err != nil {
 		errorMessage = result.Err.Error()
@@ -707,26 +733,23 @@ func writeJSONResult(writer io.Writer, result *pssh.Result, outputDir string) er
 		"target": result.Target, "status": status, "exit_code": result.ExitCode,
 		"error": errorMessage, "duration_ms": result.Duration.Milliseconds(),
 	}
+	if outputDir != "" {
+		stdoutPath, stderrPath, err := writeOutputFiles(outputDir, result)
+		if err != nil {
+			return err
+		}
+		prefix["stdout_path"] = stdoutPath
+		prefix["stderr_path"] = stderrPath
+		prefix["stdout_bytes"] = result.Stdout.Size()
+		prefix["stderr_bytes"] = result.Stderr.Size()
+		return json.NewEncoder(writer).Encode(prefix)
+	}
 	data, err := json.Marshal(prefix)
 	if err != nil {
 		return err
 	}
 	if _, err := writer.Write(data[:len(data)-1]); err != nil {
 		return err
-	}
-	if outputDir != "" {
-		stdoutPath, stderrPath, err := writeOutputFiles(outputDir, result)
-		if err != nil {
-			return err
-		}
-		extra, _ := json.Marshal(map[string]any{
-			"stdout_path": stdoutPath, "stderr_path": stderrPath,
-			"stdout_bytes": result.Stdout.Size(), "stderr_bytes": result.Stderr.Size(),
-		})
-		if _, err := fmt.Fprintf(writer, ",%s\n", extra[1:]); err != nil {
-			return err
-		}
-		return nil
 	}
 	if err := writeJSONOutputField(writer, "stdout", result.Stdout); err != nil {
 		return err
@@ -736,6 +759,37 @@ func writeJSONResult(writer io.Writer, result *pssh.Result, outputDir string) er
 	}
 	_, err = io.WriteString(writer, "}\n")
 	return err
+}
+
+func resultStatus(result *pssh.Result) string {
+	switch {
+	case result.Kind == pssh.ResultCanceled || errors.Is(result.Err, context.Canceled):
+		return string(pssh.ResultCanceled)
+	case result.Kind == pssh.ResultConnectionFailed:
+		return string(pssh.ResultConnectionFailed)
+	case result.Kind == pssh.ResultOutputFailed:
+		return string(pssh.ResultOutputFailed)
+	case result.ExitCode != 0 || result.Err != nil:
+		return "failed"
+	default:
+		return "success"
+	}
+}
+
+func writeJSONOutputFailure(writer io.Writer, result *pssh.Result, outputErr error) error {
+	return json.NewEncoder(writer).Encode(map[string]any{
+		"schema_version": schemaVersion,
+		"type":           "result",
+		"index":          result.Index,
+		"target":         result.Target,
+		"status":         string(pssh.ResultOutputFailed),
+		"exit_code":      result.ExitCode,
+		"error":          outputErr.Error(),
+		"error_code":     "output_io_failed",
+		"duration_ms":    result.Duration.Milliseconds(),
+		"stdout_bytes":   result.Stdout.Size(),
+		"stderr_bytes":   result.Stderr.Size(),
+	})
 }
 
 type utf8Validator struct {
@@ -832,13 +886,30 @@ func (w *jsonStringWriter) Write(data []byte) (int, error) {
 			break
 		}
 		r, size := utf8.DecodeRune(data)
-		quoted := strconv.QuoteRune(r)
-		if r == '\'' {
-			quoted = "'"
-		} else {
-			quoted = quoted[1 : len(quoted)-1]
+		var escaped string
+		switch r {
+		case '"':
+			escaped = `\"`
+		case '\\':
+			escaped = `\\`
+		case '\b':
+			escaped = `\b`
+		case '\f':
+			escaped = `\f`
+		case '\n':
+			escaped = `\n`
+		case '\r':
+			escaped = `\r`
+		case '\t':
+			escaped = `\t`
+		default:
+			if r < 0x20 || r == 0x7f || r == '\u2028' || r == '\u2029' {
+				escaped = fmt.Sprintf(`\u%04x`, r)
+			} else {
+				escaped = string(r)
+			}
 		}
-		if _, err := io.WriteString(w.writer, quoted); err != nil {
+		if _, err := io.WriteString(w.writer, escaped); err != nil {
 			return 0, err
 		}
 		data = data[size:]
@@ -1012,9 +1083,10 @@ func runHosts(args []string, stdout, stderr io.Writer, globalJSON bool) int {
 }
 
 type doctorCheck struct {
-	Name    string `json:"name"`
-	OK      bool   `json:"ok"`
-	Message string `json:"message"`
+	Name     string `json:"name"`
+	OK       bool   `json:"ok"`
+	Required bool   `json:"required"`
+	Message  string `json:"message"`
 }
 
 func runDoctor(ctx context.Context, args []string, stdout, stderr io.Writer, globalJSON bool) int {
@@ -1078,7 +1150,7 @@ func runDoctor(ctx context.Context, args []string, stdout, stderr io.Writer, glo
 	if connect {
 		targets, err := loadTargets(options.hostsFile, nil)
 		if err != nil {
-			checks = append(checks, doctorCheck{"network", false, err.Error()})
+			checks = append(checks, doctorCheck{Name: "network", OK: false, Required: true, Message: err.Error()})
 		} else {
 			options.config.IdentFiles = options.identities
 			probe := &pssh.Pssh{Config: &options.config}
@@ -1087,26 +1159,30 @@ func runDoctor(ctx context.Context, args []string, stdout, stderr io.Writer, glo
 					break
 				}
 				probeErr := probe.ProbeContext(ctx, target)
-				checks = append(checks, doctorCheck{"ssh:" + target, probeErr == nil, errorString(probeErr, "handshake and authentication succeeded")})
+				checks = append(checks, doctorCheck{
+					Name: "ssh:" + target, OK: probeErr == nil, Required: true,
+					Message: errorString(probeErr, "handshake and authentication succeeded"),
+				})
 			}
 		}
 	}
-	ok := true
-	for _, check := range checks {
-		ok = ok && check.OK
-	}
+	ok := doctorChecksOK(checks)
 	payload := map[string]any{
 		"schema_version": schemaVersion, "ok": ok,
 		"version": version, "commit": commit, "built_at": date,
 		"os": runtime.GOOS, "arch": runtime.GOARCH, "checks": checks,
 	}
 	if jsonMode {
-		_ = json.NewEncoder(stdout).Encode(payload)
+		if err := json.NewEncoder(stdout).Encode(payload); err != nil {
+			return 1
+		}
 	} else {
 		for _, check := range checks {
 			status := "ok"
-			if !check.OK {
+			if !check.OK && check.Required {
 				status = "error"
+			} else if !check.OK {
+				status = "info"
 			}
 			if _, err := fmt.Fprintf(stdout, "%-6s %-24s %s\n", status, check.Name, check.Message); err != nil {
 				return 1
@@ -1119,32 +1195,44 @@ func runDoctor(ctx context.Context, args []string, stdout, stderr io.Writer, glo
 	return 0
 }
 
+func doctorChecksOK(checks []doctorCheck) bool {
+	for _, check := range checks {
+		if check.Required && !check.OK {
+			return false
+		}
+	}
+	return true
+}
+
 func doctorChecks(options runOptions, stdout, stderr io.Writer) []doctorCheck {
 	checks := []doctorCheck{
-		{"version", true, fmt.Sprintf("%s (%s, built %s)", version, commit, date)},
-		{"platform", true, runtime.GOOS + "/" + runtime.GOARCH},
-		{"user", options.config.User != "", valueOr(options.config.User, "not configured")},
-		{"parallel", options.config.Concurrency > 0, strconv.Itoa(options.config.Concurrency)},
-		{"max_agent_connections", options.config.MaxAgentConns > 0, strconv.Itoa(options.config.MaxAgentConns)},
-		{"max_buffer_memory", options.config.MaxBufferMemory > 0, formatByteSize(options.config.MaxBufferMemory)},
-		{"max_spool_size", options.config.MaxSpoolSize > 0, formatByteSize(options.config.MaxSpoolSize)},
-		{"stdout_tty", true, strconv.FormatBool(isTerminalWriter(stdout))},
-		{"stderr_tty", true, strconv.FormatBool(isTerminalWriter(stderr))},
-		{"NO_COLOR", true, valueOr(os.Getenv("NO_COLOR"), "unset")},
-		{"TERM", true, valueOr(os.Getenv("TERM"), "unset")},
+		{Name: "version", OK: true, Message: fmt.Sprintf("%s (%s, built %s)", version, commit, date)},
+		{Name: "platform", OK: true, Message: runtime.GOOS + "/" + runtime.GOARCH},
+		{Name: "user", OK: options.config.User != "", Required: true, Message: valueOr(options.config.User, "not configured")},
+		{Name: "parallel", OK: options.config.Concurrency > 0, Required: true, Message: strconv.Itoa(options.config.Concurrency)},
+		{Name: "max_agent_connections", OK: options.config.MaxAgentConns > 0, Required: true, Message: strconv.Itoa(options.config.MaxAgentConns)},
+		{Name: "max_buffer_memory", OK: options.config.MaxBufferMemory > 0, Required: true, Message: formatByteSize(options.config.MaxBufferMemory)},
+		{Name: "max_spool_size", OK: options.config.MaxSpoolSize > 0, Required: true, Message: formatByteSize(options.config.MaxSpoolSize)},
+		{Name: "stdout_tty", OK: true, Message: strconv.FormatBool(isTerminalWriter(stdout))},
+		{Name: "stderr_tty", OK: true, Message: strconv.FormatBool(isTerminalWriter(stderr))},
+		{Name: "NO_COLOR", OK: true, Message: valueOr(os.Getenv("NO_COLOR"), "unset")},
+		{Name: "TERM", OK: true, Message: valueOr(os.Getenv("TERM"), "unset")},
 	}
 	socket := options.config.SSHAuthSocket
 	socketOK := false
 	socketMessage := "not configured"
 	if socket != "" && !options.config.IdentityFileOnly {
-		conn, err := net.DialTimeout("unix", socket, time.Second)
+		probe := options.agentProbe
+		if probe == nil {
+			probe = probeAgentSocket
+		}
+		err := probe(socket)
 		socketOK = err == nil
 		socketMessage = errorString(err, "available")
-		if conn != nil {
-			_ = conn.Close()
-		}
+	} else if options.config.IdentityFileOnly {
+		socketMessage = "disabled by --identities-only"
 	}
-	checks = append(checks, doctorCheck{"ssh_agent", socketOK || options.config.IdentityFileOnly, socketMessage})
+	checks = append(checks, doctorCheck{Name: "ssh_agent", OK: socketOK, Message: socketMessage})
 	readableIdentity := false
 	for _, identity := range options.identities {
 		expanded := expandHome(identity)
@@ -1158,26 +1246,48 @@ func doctorChecks(options runOptions, stdout, stderr io.Writer) []doctorCheck {
 		if err != nil && !options.identitySet {
 			message = "optional default not found: " + expanded
 		}
-		checks = append(checks, doctorCheck{"identity:" + identity, ok || !options.identitySet, message})
+		checks = append(checks, doctorCheck{
+			Name: "identity:" + identity, OK: ok, Required: options.identitySet, Message: message,
+		})
 	}
 	knownHosts := filepath.Join(os.Getenv("HOME"), ".ssh", "known_hosts")
 	knownFile, knownErr := os.Open(knownHosts)
 	if knownFile != nil {
 		_ = knownFile.Close()
 	}
-	checks = append(checks, doctorCheck{"known_hosts", options.config.IgnoreHostKey || knownErr == nil, errorString(knownErr, knownHosts)})
+	checks = append(checks, doctorCheck{
+		Name: "known_hosts", OK: options.config.IgnoreHostKey || knownErr == nil, Required: true,
+		Message: errorString(knownErr, knownHosts),
+	})
 	if options.hostsFile != "" {
 		targets, err := pssh.ReadHosts(options.hostsFile)
-		checks = append(checks, doctorCheck{"hosts_file", err == nil && len(targets) > 0, errorString(err, fmt.Sprintf("%d targets", len(targets)))})
+		checks = append(checks, doctorCheck{
+			Name: "hosts_file", OK: err == nil && len(targets) > 0, Required: true,
+			Message: errorString(err, fmt.Sprintf("%d targets", len(targets))),
+		})
 	}
 	parent := options.config.SpoolDir
 	tempDir, err := os.MkdirTemp(parent, "gopssh-doctor-*")
 	if err == nil {
 		err = os.Remove(tempDir)
 	}
-	checks = append(checks, doctorCheck{"spool_directory", err == nil, errorString(err, valueOr(parent, os.TempDir()))})
-	checks = append(checks, doctorCheck{"authentication", socketOK || readableIdentity, "at least one usable authentication source"})
+	checks = append(checks, doctorCheck{
+		Name: "spool_directory", OK: err == nil, Required: true,
+		Message: errorString(err, valueOr(parent, os.TempDir())),
+	})
+	checks = append(checks, doctorCheck{
+		Name: "authentication", OK: socketOK || readableIdentity, Required: true,
+		Message: "at least one usable authentication source",
+	})
 	return checks
+}
+
+func probeAgentSocket(socket string) error {
+	conn, err := net.DialTimeout("unix", socket, time.Second)
+	if err != nil {
+		return err
+	}
+	return conn.Close()
 }
 
 func runConfig(args []string, stdout, stderr io.Writer, globalJSON bool) int {

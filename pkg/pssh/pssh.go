@@ -237,10 +237,25 @@ type ResultOutput interface {
 	Size() int64
 }
 
+// ResultKind identifies which execution phase produced a result. ExitCode alone
+// cannot distinguish a connection failure from a remote command that exits 255.
+type ResultKind string
+
+const (
+	ResultSuccess           ResultKind = "success"
+	ResultRemoteExit        ResultKind = "remote_exit"
+	ResultConnectionFailed  ResultKind = "connection_failed"
+	ResultRemoteStartFailed ResultKind = "remote_start_failed"
+	ResultCanceled          ResultKind = "canceled"
+	ResultOutputFailed      ResultKind = "output_failed"
+	ResultInternalFailed    ResultKind = "internal_failed"
+)
+
 // Result is the result of one target execution.
 type Result struct {
 	Index    int
 	Target   string
+	Kind     ResultKind
 	ExitCode int
 	Err      error
 	Stdout   ResultOutput
@@ -335,6 +350,7 @@ type input struct {
 type result struct {
 	conID     int
 	sessionID int
+	kind      ResultKind
 	code      int
 	err       error
 	stdout    resultOutput
@@ -347,6 +363,7 @@ func (p *Pssh) newResult(conID, sessionID int) *result {
 	return &result{
 		conID:     conID,
 		sessionID: sessionID,
+		kind:      ResultSuccess,
 		stdout:    newSpillBuffer(p.outputMemory, p.outputSpool, p.createOutputSpoolFile),
 		stderr:    newSpillBuffer(p.outputMemory, p.outputSpool, p.createOutputSpoolFile),
 		started:   time.Now(),
@@ -722,6 +739,7 @@ func (p *Pssh) emitResult(res *result, host string) error {
 	return p.ResultHandler(&Result{
 		Index:    res.conID,
 		Target:   host,
+		Kind:     res.kind,
 		ExitCode: res.code,
 		Err:      res.err,
 		Stdout:   res.stdout,
