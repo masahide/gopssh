@@ -21,7 +21,7 @@ type TemporaryError interface {
 	Temporary() bool
 }
 
-func (c *conWork) conWorker(ctx context.Context, config ssh.ClientConfig, instanceCh chan<- conInstance) {
+func (c *conWork) conWorker(ctx context.Context, config ssh.ClientConfig) {
 	if c.Pssh == nil {
 		return
 	}
@@ -30,16 +30,22 @@ func (c *conWork) conWorker(ctx context.Context, config ssh.ClientConfig, instan
 	}
 	authMethods := c.mergeAuthMethods(c.getIdentFileAuthMethods(c.identFileData))
 	config.Auth = authMethods
-	res := conInstance{conWork: c, err: nil}
 	if c.Debug {
 		log.Printf("start ssh.Dial : %s", c.host)
 	}
 	conn, err := c.sshDialer.Dial("tcp", c.host, &config)
 	if err != nil {
-		res.err = fmt.Errorf("cannot connect [%s] err:%s", c.host, err)
 		select {
 		case <-ctx.Done():
-		case instanceCh <- res:
+		case cmd := <-c.command:
+			res := c.newResult(c.id, cmd.id)
+			res.code = connectFailureCode
+			res.err = fmt.Errorf("cannot connect [%s]: %w", c.host, err)
+			select {
+			case <-ctx.Done():
+				c.delReslt(res)
+			case cmd.results <- res:
+			}
 		}
 		return
 	}

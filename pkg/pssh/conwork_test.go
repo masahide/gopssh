@@ -56,6 +56,15 @@ func (n mockSSHDial) Dial(network, addr string, config *ssh.ClientConfig) (sshCl
 	return &conSSHMock{}, n.err
 }
 
+type hostSSHDial struct{}
+
+func (hostSSHDial) Dial(network, addr string, config *ssh.ClientConfig) (sshClientIface, error) {
+	if addr == "bad:22" {
+		return nil, errors.New("connection refused")
+	}
+	return &conSSHMock{}, nil
+}
+
 func mockStartSessionWorker(ctx context.Context, conn sshClientIface, cmd input) {
 	cmd.results <- &result{}
 }
@@ -63,12 +72,10 @@ func mockStartSessionWorker(ctx context.Context, conn sshClientIface, cmd input)
 func TestConWorker(t *testing.T) {
 
 	var tests = []struct {
-		err  error
-		done bool
-		want string
+		err error
 	}{
-		{nil, false, ""},
-		{errors.New("hoge"), true, "hoge"},
+		{nil},
+		{errors.New("hoge")},
 	}
 	for _, test := range tests {
 		ctx, cancel := context.WithCancel(context.Background())
@@ -84,20 +91,61 @@ func TestConWorker(t *testing.T) {
 			command:      make(chan input, 1),
 			startSession: mockStartSessionWorker,
 		}
-		conInstances := make(chan conInstance, 1)
 		results := make(chan *result, 1)
 		c.command <- input{command: "", stdin: "", results: results}
-		go c.conWorker(ctx, ssh.ClientConfig{}, conInstances)
-		if test.done {
-			cancel()
-		}
+		go c.conWorker(ctx, ssh.ClientConfig{})
 		select {
-		case <-ctx.Done():
 		case res := <-results:
-			if res.err != nil {
-				t.Error(res)
+			if test.err == nil && res.err != nil {
+				t.Error(res.err)
 			}
+			if test.err != nil {
+				if res.err == nil || res.code != connectFailureCode {
+					t.Errorf("res=%+v, want connection failure", res)
+				}
+			}
+		case <-time.After(time.Second):
+			t.Fatal("timed out waiting for result")
 		}
 		cancel()
+	}
+}
+
+func TestConnectionFailureDoesNotCancelOtherHosts(t *testing.T) {
+	p := &Pssh{Config: &Config{
+		Concurrency:    2,
+		MaxAgentConns:  DefaultMaxAgentConns,
+		MaxOutputBytes: DefaultMaxOutputBytes,
+	}}
+	p.Init()
+	p.sshDialer = hostSSHDial{}
+	p.cws = []*conWork{
+		p.newConWork(0, "bad:22"),
+		p.newConWork(1, "good:22"),
+	}
+	p.cws[1].startSession = func(ctx context.Context, conn sshClientIface, cmd input) {
+		cmd.results <- p.newResult(1, cmd.id)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	results := make(chan *result, len(p.cws))
+	for _, worker := range p.cws {
+		worker.command <- input{results: results}
+	}
+	p.runConWorkers(ctx)
+
+	got := make(map[int]int)
+	for range p.cws {
+		select {
+		case result := <-results:
+			got[result.conID] = result.code
+			p.delReslt(result)
+		case <-time.After(time.Second):
+			t.Fatal("timed out waiting for all host results")
+		}
+	}
+	if got[0] != connectFailureCode || got[1] != 0 {
+		t.Fatalf("result codes=%v, want map[0:%d 1:0]", got, connectFailureCode)
 	}
 }

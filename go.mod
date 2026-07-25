@@ -16,10 +16,10 @@ require (
 require (
 	github.com/blakesmith/ar v0.0.0-20190502131153-809d4375e1fb // indirect
 	github.com/cavaliergopher/cpio v1.0.1 // indirect
-	github.com/klauspost/compress v1.19.0 // indirect
+	github.com/klauspost/compress v1.19.1 // indirect
 	github.com/klauspost/pgzip v1.2.6 // indirect
 	github.com/mattn/go-colorable v0.1.15 // indirect
-	github.com/mattn/go-isatty v0.0.23 // indirect
-	github.com/ulikunitz/xz v0.5.15 // indirect
+	github.com/mattn/go-isatty v0.0.24 // indirect
+	github.com/ulikunitz/xz v0.5.16 // indirect
 	golang.org/x/sys v0.47.0 // indirect
 )

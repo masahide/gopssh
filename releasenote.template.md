@@ -1,5 +1,11 @@
 ## Installation
 
+### macOS / Linux
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/masahide/gopssh/main/install.sh | sh
+```
+
 ### Linux
 
 For RHEL/CentOS:
@@ -24,12 +30,4 @@ sudo dpkg -i /tmp/gopssh.deb
 # ARM
 wget -qO /tmp/gopssh.deb https://github.com/masahide/gopssh/releases/latest/download/__arm64deb__
 sudo dpkg -i /tmp/gopssh.deb
-```
-
-### macOS
-
-
-```bash
-# x86_64 or Apple silicon (Automatic switching)
-brew install masahide/tap/gopssh
 ```

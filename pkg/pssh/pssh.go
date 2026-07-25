@@ -1,8 +1,10 @@
 package pssh
 
 import (
+	"bufio"
 	"bytes"
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -10,19 +12,25 @@ import (
 	"net"
 	"os"
 	"path"
-	"regexp"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/fatih/color"
-	"github.com/pkg/errors"
+	pkgerrors "github.com/pkg/errors"
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/crypto/ssh/knownhosts"
 )
 
 const (
-	one = 1
+	one                = 1
+	connectFailureCode = 255
+	// DefaultConcurrency limits simultaneous SSH connections.
+	DefaultConcurrency = 32
+	// DefaultMaxAgentConns limits simultaneous SSH Agent socket connections.
+	DefaultMaxAgentConns = 50
+	// DefaultMaxOutputBytes limits each host's stdout and stderr buffer.
+	DefaultMaxOutputBytes int64 = 10 << 20
 )
 
 type prn interface {
@@ -32,7 +40,8 @@ type prn interface {
 
 type print struct {
 	colorMode bool
-	output    io.Writer
+	stdout    io.Writer
+	stderr    io.Writer
 	red       prn
 	boldRed   prn
 	green     prn
@@ -40,13 +49,24 @@ type print struct {
 
 // ToSlice comma separated to slice
 func ToSlice(s string) []string {
-	return strings.Split(s, ",")
+	if strings.TrimSpace(s) == "" {
+		return nil
+	}
+	values := strings.Split(s, ",")
+	result := make([]string, 0, len(values))
+	for _, value := range values {
+		if value = strings.TrimSpace(value); value != "" {
+			result = append(result, value)
+		}
+	}
+	return result
 }
 
-func newPrint(output io.Writer, colorMode bool) *print {
+func newPrint(stdout, stderr io.Writer, colorMode bool) *print {
 	p := &print{
-		output:    output,
 		colorMode: colorMode,
+		stdout:    stdout,
+		stderr:    stderr,
 	}
 	p.init()
 	return p
@@ -55,20 +75,35 @@ func newPrint(output io.Writer, colorMode bool) *print {
 func (p *print) init() {
 	if p.colorMode {
 		p.red = color.New(color.FgRed)
+		p.red.(*color.Color).SetWriter(p.stderr)
 		p.boldRed = color.New(color.FgRed).Add(color.Bold)
+		p.boldRed.(*color.Color).SetWriter(p.stderr)
 		p.green = color.New(color.FgGreen)
+		p.green.(*color.Color).SetWriter(p.stdout)
 		return
 	}
-	p.red = p
-	p.boldRed = p
-	p.green = p
+	p.red = writerPrinter{p.stderr}
+	p.boldRed = writerPrinter{p.stderr}
+	p.green = writerPrinter{p.stdout}
 }
 
 func (p *print) Print(a ...interface{}) (n int, err error) {
-	return fmt.Fprint(p.output, a...)
+	return fmt.Fprint(p.stdout, a...)
 }
 func (p *print) Printf(format string, a ...interface{}) (n int, err error) {
-	return fmt.Fprintf(p.output, format, a...)
+	return fmt.Fprintf(p.stdout, format, a...)
+}
+
+type writerPrinter struct {
+	io.Writer
+}
+
+func (p writerPrinter) Print(a ...interface{}) (n int, err error) {
+	return fmt.Fprint(p.Writer, a...)
+}
+
+func (p writerPrinter) Printf(format string, a ...interface{}) (n int, err error) {
+	return fmt.Fprintf(p.Writer, format, a...)
 }
 
 type sshDialIface interface {
@@ -100,7 +135,6 @@ type Pssh struct {
 	stderrPool           sync.Pool
 	//netDial              func(network, address string) (net.Conn, error)
 	sshDialer     sshDialIface
-	conInstances  chan conInstance
 	cws           []*conWork
 	clientConf    ssh.ClientConfig
 	identFileData [][]byte
@@ -111,6 +145,7 @@ type Pssh struct {
 type Config struct {
 	Concurrency      int
 	MaxAgentConns    int
+	MaxOutputBytes   int64
 	User             string
 	Hostsfile        string
 	ShowHostName     bool
@@ -135,12 +170,33 @@ func newBytesBuf() interface{} { return new(bytes.Buffer) }
 
 // Init Pssh
 func (p *Pssh) Init() {
-	p.concurrentGoroutines = make(chan struct{}, p.Concurrency)
-	p.print = newPrint(os.Stdout, p.ColorMode)
+	concurrency := p.Concurrency
+	if concurrency < 0 {
+		concurrency = 0
+	}
+	p.concurrentGoroutines = make(chan struct{}, concurrency)
+	p.print = newPrint(os.Stdout, os.Stderr, p.ColorMode)
 	p.stdoutPool = sync.Pool{New: newBytesBuf}
 	p.stderrPool = sync.Pool{New: newBytesBuf}
 	p.sshDialer = sshDial{}
 	p.identFileData = p.readIdentFiles()
+}
+
+// Validate checks configuration values that would otherwise panic or block.
+func (p *Pssh) Validate() error {
+	if p.Config == nil {
+		return errors.New("config is required")
+	}
+	if p.Concurrency <= 0 {
+		return errors.New("concurrency must be greater than zero")
+	}
+	if p.MaxAgentConns <= 0 {
+		return errors.New("max agent connections must be greater than zero")
+	}
+	if p.MaxOutputBytes <= 0 {
+		return errors.New("max output bytes must be greater than zero")
+	}
+	return nil
 }
 
 type input struct {
@@ -150,17 +206,14 @@ type input struct {
 	results chan<- *result
 }
 type result struct {
-	conID     int
-	sessionID int
-	code      int
-	err       error
-	stdout    *bytes.Buffer
-	stderr    *bytes.Buffer
-}
-
-type conInstance struct {
-	*conWork
-	err error
+	conID           int
+	sessionID       int
+	code            int
+	err             error
+	stdout          *bytes.Buffer
+	stderr          *bytes.Buffer
+	stdoutTruncated bool
+	stderrTruncated bool
 }
 
 func (p *Pssh) newResult(conID, sessionID int) *result {
@@ -179,24 +232,58 @@ func (p *Pssh) delReslt(r *result) {
 	p.stderrPool.Put(r.stderr)
 }
 
-// nolint:gochecknoglobals
-var re = regexp.MustCompile(":.+")
-
 func readHosts(fileName string) ([]string, error) {
 	// nolint: gosec
-	data, err := os.ReadFile(fileName)
+	file, err := os.Open(fileName)
 	if err != nil {
 		return nil, err
 	}
-	lines := bytes.Fields(data)
-	res := make([]string, len(lines))
-	for i := range lines {
-		res[i] = string(lines[i])
-		if !re.MatchString(res[i]) {
-			res[i] += ":22"
+	defer func() {
+		_ = file.Close()
+	}()
+
+	var result []string
+	scanner := bufio.NewScanner(file)
+	for lineNumber := 1; scanner.Scan(); lineNumber++ {
+		line := strings.SplitN(scanner.Text(), "#", 2)[0]
+		for _, value := range strings.Fields(line) {
+			host, err := normalizeHost(value)
+			if err != nil {
+				return nil, fmt.Errorf("%s:%d: %w", fileName, lineNumber, err)
+			}
+			result = append(result, host)
 		}
 	}
-	return res, nil
+	if err := scanner.Err(); err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
+func normalizeHost(value string) (string, error) {
+	if host, port, err := net.SplitHostPort(value); err == nil {
+		if host == "" || port == "" {
+			return "", fmt.Errorf("invalid host %q", value)
+		}
+		return net.JoinHostPort(host, port), nil
+	}
+	if strings.HasPrefix(value, "[") && strings.HasSuffix(value, "]") {
+		host := strings.TrimSuffix(strings.TrimPrefix(value, "["), "]")
+		if net.ParseIP(host) == nil {
+			return "", fmt.Errorf("invalid host %q", value)
+		}
+		return net.JoinHostPort(host, "22"), nil
+	}
+	if net.ParseIP(value) != nil {
+		return net.JoinHostPort(value, "22"), nil
+	}
+	if strings.Contains(value, ":") {
+		return "", fmt.Errorf("invalid host %q", value)
+	}
+	if value == "" {
+		return "", errors.New("host must not be empty")
+	}
+	return net.JoinHostPort(value, "22"), nil
 }
 
 func getHostKeyCallback(insecure bool) (ssh.HostKeyCallback, error) {
@@ -207,7 +294,7 @@ func getHostKeyCallback(insecure bool) (ssh.HostKeyCallback, error) {
 	file := path.Join(os.Getenv("HOME"), ".ssh/known_hosts")
 	cb, err := knownhosts.New(file)
 	if err != nil {
-		return nil, errors.Wrap(err, "knownhosts.New")
+		return nil, pkgerrors.Wrap(err, "knownhosts.New")
 	}
 	return cb, nil
 }
@@ -226,6 +313,10 @@ func (p *Pssh) setConnPool() {
 
 // Run main task
 func (p *Pssh) Run() int {
+	if err := p.Validate(); err != nil {
+		log.Printf("invalid config: %s", err)
+		return one
+	}
 	hosts, err := readHosts(p.Hostsfile)
 	if err != nil {
 		// nolint: errcheck,gosec
@@ -244,23 +335,16 @@ func (p *Pssh) Run() int {
 		//Auth:            p.getAuthMethods(),
 		Timeout:         p.Timeout,
 		HostKeyCallback: hc,
-		Config:          ssh.Config{KeyExchanges: p.Config.Kex, Ciphers: p.Config.Ciphers, MACs: p.Config.Macs},
+		Config:          ssh.Config{KeyExchanges: p.Kex, Ciphers: p.Ciphers, MACs: p.Macs},
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	p.conInstances = make(chan conInstance, len(hosts))
 	p.cws = make([]*conWork, len(hosts))
 	for i, host := range hosts {
 		p.cws[i] = p.newConWork(i, host)
 	}
 	go p.runConWorkers(ctx)
-	go func() {
-		if ierr := p.getConInstanceErrs(); ierr != nil {
-			log.Print(ierr)
-			cancel()
-		}
-	}()
 
 	stdin := []byte{}
 	if p.StdinFlag {
@@ -288,19 +372,9 @@ func (p *Pssh) runConWorkers(ctx context.Context) int {
 		if p.Concurrency > 0 {
 			p.concurrentGoroutines <- struct{}{}
 		}
-		go p.cws[i].conWorker(ctx, p.clientConf, p.conInstances)
+		go p.cws[i].conWorker(ctx, p.clientConf)
 	}
 	return len(p.cws)
-}
-
-func (p *Pssh) getConInstanceErrs() error {
-	for con := range p.conInstances {
-		if con.err != nil {
-			// nolint: errcheck,gosec
-			return fmt.Errorf("host:%s err:%s", con.host, con.err)
-		}
-	}
-	return nil
 }
 
 func (p *Pssh) printSortResults(ctx context.Context, results chan *result, cws []*conWork) int {
@@ -317,10 +391,12 @@ func (p *Pssh) printSortResults(ctx context.Context, results chan *result, cws [
 					break L1
 				}
 				p.printResult(resSlise[j], cws[resSlise[j].conID].host)
-				cur = j + one
 				if firstCode == 0 && resSlise[j].code != 0 {
 					firstCode = resSlise[j].code
 				}
+				p.delReslt(resSlise[j])
+				resSlise[j] = nil
+				cur = j + one
 			}
 		case <-ctx.Done():
 			firstCode = one
@@ -370,11 +446,11 @@ func (p *Pssh) printResult(res *result, host string) {
 		if !strings.HasSuffix(e, "\n") {
 			e += "\n"
 		}
-		p.red.Printf("result err: %s", e)
+		_, _ = p.red.Printf("result err: %s", e)
 	}
 	if res.stdout.Len() > 0 {
 		// nolint: errcheck,gosec
-		res.stdout.WriteTo(os.Stdout)
+		_, _ = res.stdout.WriteTo(p.stdout)
 	}
 	if res.stderr.Len() > 0 {
 		// nolint: errcheck,gosec
@@ -410,6 +486,31 @@ func readStream(ctx context.Context, out io.Writer, r io.Reader, errCh chan<- er
 	case <-ctx.Done():
 	}
 	close(errCh)
+}
+
+type cappedWriter struct {
+	dst       io.Writer
+	remaining int64
+	truncated *bool
+}
+
+func (w *cappedWriter) Write(data []byte) (int, error) {
+	originalLen := len(data)
+	if w.remaining <= 0 {
+		*w.truncated = true
+		return originalLen, nil
+	}
+	toWrite := data
+	if int64(len(toWrite)) > w.remaining {
+		toWrite = toWrite[:w.remaining]
+		*w.truncated = true
+	}
+	written, err := w.dst.Write(toWrite)
+	w.remaining -= int64(written)
+	if err != nil {
+		return written, err
+	}
+	return originalLen, nil
 }
 
 func (p *Pssh) sshKeyAgentCallback() ssh.AuthMethod {

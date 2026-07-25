@@ -82,7 +82,7 @@ func TestNewResult(t *testing.T) {
 }
 
 func TestRun(t *testing.T) {
-	p := &Pssh{Config: &Config{ColorMode: true}}
+	p := &Pssh{Config: &Config{ColorMode: true, MaxOutputBytes: DefaultMaxOutputBytes}}
 	p.Init()
 	results := make(chan *result, 10)
 	s := &sessionWork{
@@ -115,5 +115,25 @@ func TestRun(t *testing.T) {
 	r = <-results
 	if r.err == nil {
 		t.Error("r.res!=nil, want:nil")
+	}
+}
+
+func TestCappedWriter(t *testing.T) {
+	var dst bytes.Buffer
+	truncated := false
+	writer := &cappedWriter{dst: &dst, remaining: 4, truncated: &truncated}
+	n, err := writer.Write([]byte("abcdef"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != 6 {
+		t.Errorf("Write() n=%d, want 6 so the source continues draining", n)
+	}
+	if dst.String() != "abcd" || !truncated {
+		t.Errorf("dst=%q truncated=%t", dst.String(), truncated)
+	}
+	n, err = writer.Write([]byte("gh"))
+	if err != nil || n != 2 || dst.String() != "abcd" {
+		t.Errorf("second Write() n=%d err=%v dst=%q", n, err, dst.String())
 	}
 }

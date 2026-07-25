@@ -13,7 +13,7 @@ Usage of ./gopssh:
     	Max ssh agent unix socket connections (default 50)
   -c	colorized outputs (default true)
   -ciphers string
-    	allowed cipher algorithms (default "arcfour256,aes128-gcm@openssh.com,chacha20-poly1305@openssh.com,aes128-ctr,aes192-ctr,aes256-ctr")
+    	comma-separated cipher algorithms (default: secure SSH defaults)
   -d	show hostname
   -debug
     	debug outputs
@@ -21,13 +21,19 @@ Usage of ./gopssh:
     	host file
   -i string
     	identity files (default "~/.ssh/id_dsa,~/.ssh/id_ecdsa,~/.ssh/id_ed25519,~/.ssh/id_rsa")
+  -identities-only
+    	use identity files only and disable SSH Agent authentication
   -k	Do not check the host key
   -kex string
-    	allowed key exchanges algorithms (default "diffie-hellman-group1-sha1,diffie-hellman-group14-sha1,ecdh-sha2-nistp256,ecdh-sha2-nistp384,ecdh-sha2-nistp521,curve25519-sha256@libssh.org")
+    	comma-separated key exchange algorithms (default: secure SSH defaults)
+  -legacy-crypto
+    	use the legacy SSH algorithms and priority order
   -macs string
-    	allowed MAC algorithms (default "hmac-sha1-96,hmac-sha1,hmac-sha2-256,hmac-sha2-256-etm@openssh.com")
+    	comma-separated MAC algorithms (default: secure SSH defaults)
+  -max-output-bytes int
+    	maximum buffered bytes per stdout/stderr stream and host (default 10485760)
   -p int
-    	concurrency (defalut "0" is unlimit)
+    	maximum concurrent SSH connections (default 32)
   -s	sort the results and output (default true)
   -timeout duration
     	maximum amount of time for the TCP connection to establish. (default 15s)
@@ -44,8 +50,22 @@ example:
 
 ## Installation
 
-see [releases page](https://github.com/masahide/gopssh/releases).
+macOS / Linux:
 
+```bash
+curl -fsSL https://raw.githubusercontent.com/masahide/gopssh/main/install.sh | sh
+```
+
+The binary is installed to `~/.local/bin/gopssh`. To install a specific version
+or change the destination:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/masahide/gopssh/main/install.sh |
+  GOPSSH_VERSION=v0.5.6 GOPSSH_INSTALL_DIR="$HOME/bin" sh
+```
+
+See the [releases page](https://github.com/masahide/gopssh/releases) for packages
+and release notes.
 
 
 ## build

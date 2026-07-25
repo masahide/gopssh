@@ -7,6 +7,7 @@ import (
 	"log"
 	"net"
 	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -58,7 +59,7 @@ func TestInit(t *testing.T) {
 		colorMode bool
 		want      prn
 	}{
-		{false, &print{}},
+		{false, writerPrinter{}},
 		{true, color.New()},
 	}
 	for _, test := range tests {
@@ -66,8 +67,8 @@ func TestInit(t *testing.T) {
 			Config: &Config{ColorMode: test.colorMode},
 		}
 		p.Init()
-		if _, ok := test.want.(*print); ok {
-			if _, ok := p.red.(*print); !ok {
+		if _, ok := test.want.(writerPrinter); ok {
+			if _, ok := p.red.(writerPrinter); !ok {
 				t.Errorf("res type :%T, want %T", p.red, test.want)
 			}
 		}
@@ -98,6 +99,9 @@ func TestReadHosts(t *testing.T) {
 	for _, test := range tests {
 		r, err := readHosts(test.file)
 		if test.err != nil {
+			if err == nil {
+				t.Fatalf("err=nil, want:%s", test.err)
+			}
 			if err.Error() != test.err.Error() {
 				t.Errorf("err:%s,want:%s", err.Error(), test.err.Error())
 			}
@@ -108,6 +112,32 @@ func TestReadHosts(t *testing.T) {
 	}
 
 }
+
+func TestReadHostsIPv6AndComments(t *testing.T) {
+	hostsFile := filepath.Join(t.TempDir(), "hosts")
+	data := "host1 # production\n::1\n[2001:db8::1]:2222\nhost2:2200 host3\n\n# ignored\n"
+	if err := os.WriteFile(hostsFile, []byte(data), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	got, err := readHosts(hostsFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"host1:22", "[::1]:22", "[2001:db8::1]:2222", "host2:2200", "host3:22"}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("hosts=%v, want %v", got, want)
+	}
+}
+
+func TestReadHostsRejectsMissingPort(t *testing.T) {
+	hostsFile := filepath.Join(t.TempDir(), "hosts")
+	if err := os.WriteFile(hostsFile, []byte("host:\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := readHosts(hostsFile); err == nil {
+		t.Fatal("readHosts() error=nil, want invalid host error")
+	}
+}
 func TestGetHostKeyCallback(t *testing.T) {
 	r, err := getHostKeyCallback(true)
 	if err != nil {
@@ -116,7 +146,7 @@ func TestGetHostKeyCallback(t *testing.T) {
 	if r("", &net.IPAddr{}, &agent.Key{}) != nil {
 		t.Errorf("r:%v, want:nil", r)
 	}
-	os.Setenv("HOME", "./test")
+	t.Setenv("HOME", "./test")
 	r, err = getHostKeyCallback(false)
 	if err != nil {
 		t.Error(err)
@@ -124,7 +154,7 @@ func TestGetHostKeyCallback(t *testing.T) {
 	if r == nil {
 		t.Error("r:nil, want:not nil")
 	}
-	os.Setenv("HOME", "/dev/null")
+	t.Setenv("HOME", "/dev/null")
 	r, err = getHostKeyCallback(false)
 	if err == nil {
 		t.Error(err)
@@ -137,16 +167,72 @@ func TestPrint(t *testing.T) {
 	b := []byte{}
 	buf := bytes.NewBuffer(b)
 	p := &print{
-		output: buf,
+		stdout: buf,
+		stderr: buf,
 	}
-	p.Print("hoge")
+	if _, err := p.Print("hoge"); err != nil {
+		t.Fatal(err)
+	}
 	if buf.String() != "hoge" {
 		t.Errorf("buf:%s, want:hoge", buf.String())
 	}
 	buf.Reset()
-	p.Printf("fuga%s", "hoge")
+	if _, err := p.Printf("fuga%s", "hoge"); err != nil {
+		t.Fatal(err)
+	}
 	if buf.String() != "fugahoge" {
 		t.Errorf("buf:%s, want:fugahoge", buf.String())
+	}
+}
+
+func TestPrintResultSeparatesStdoutAndStderr(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	p := &Pssh{
+		Config: &Config{ShowHostName: true},
+		print:  newPrint(&stdout, &stderr, false),
+	}
+	res := &result{
+		code:   1,
+		err:    errors.New("remote failed"),
+		stdout: bytes.NewBufferString("normal output\n"),
+		stderr: bytes.NewBufferString("error output\n"),
+	}
+	p.printResult(res, "host1:22")
+	if stdout.String() != "normal output\n" {
+		t.Errorf("stdout=%q", stdout.String())
+	}
+	for _, want := range []string{"host1:22  result code 1", "result err: remote failed", "error output"} {
+		if !strings.Contains(stderr.String(), want) {
+			t.Errorf("stderr=%q, missing %q", stderr.String(), want)
+		}
+	}
+}
+
+func TestValidate(t *testing.T) {
+	valid := Config{
+		Concurrency:    DefaultConcurrency,
+		MaxAgentConns:  DefaultMaxAgentConns,
+		MaxOutputBytes: DefaultMaxOutputBytes,
+	}
+	tests := []struct {
+		name   string
+		mutate func(*Config)
+	}{
+		{"concurrency", func(c *Config) { c.Concurrency = 0 }},
+		{"max agent connections", func(c *Config) { c.MaxAgentConns = 0 }},
+		{"max output bytes", func(c *Config) { c.MaxOutputBytes = 0 }},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			c := valid
+			test.mutate(&c)
+			if err := (&Pssh{Config: &c}).Validate(); err == nil {
+				t.Fatal("Validate() error=nil")
+			}
+		})
+	}
+	if err := (&Pssh{Config: &valid}).Validate(); err != nil {
+		t.Fatalf("Validate() error=%v", err)
 	}
 }
 
@@ -163,32 +249,6 @@ func TestRunConWorkers(t *testing.T) {
 		t.Error("i!=1")
 	}
 
-}
-
-func TestGetConInstanceErrs(t *testing.T) {
-	p := &Pssh{}
-	p.conInstances = make(chan conInstance, 1)
-	p.conInstances <- conInstance{
-		err:     errors.New("hoge"),
-		conWork: &conWork{host: "host1"},
-	}
-	close(p.conInstances)
-	p.cws = []*conWork{{}}
-	err := p.getConInstanceErrs()
-	if err.Error() != "host:host1 err:hoge" {
-		t.Errorf("err=%s,want:host:host1 err:hoge", err.Error())
-	}
-	p.conInstances = make(chan conInstance, 1)
-	p.conInstances <- conInstance{
-		conWork: &conWork{host: ""},
-		err:     nil,
-	}
-	close(p.conInstances)
-	p.cws = []*conWork{{}}
-	err = p.getConInstanceErrs()
-	if err != nil {
-		t.Error("err != nil")
-	}
 }
 
 type mockPrin struct {
@@ -230,14 +290,7 @@ func TestPrintResults(t *testing.T) {
 				ShowHostName: true,
 			},
 		}
-		p.print = newPrint(os.Stdout, false)
-		p.conInstances = make(chan conInstance, len(tc.ins))
-		for _, c := range tc.ins {
-			p.conInstances <- conInstance{
-				err:     errors.New("hoge"),
-				conWork: &conWork{id: c.id, host: c.host},
-			}
-		}
+		p.print = newPrint(os.Stdout, os.Stderr, false)
 		mock := mockPrin{}
 		p.red = &mock
 		p.boldRed = &mock
@@ -357,14 +410,7 @@ host5  result code 0
 				ShowHostName: true,
 			},
 		}
-		p.print = newPrint(os.Stdout, false)
-		p.conInstances = make(chan conInstance, len(tc.ins))
-		for _, c := range tc.ins {
-			p.conInstances <- conInstance{
-				err:     errors.New("hoge"),
-				conWork: &conWork{id: c.id, host: c.host},
-			}
-		}
+		p.print = newPrint(os.Stdout, os.Stderr, false)
 		mock := mockPrin{}
 		p.red = &mock
 		p.boldRed = &mock
@@ -401,9 +447,19 @@ host5  result code 0
 }
 
 func TestPsshRun(t *testing.T) {
-	p := &Pssh{Config: &Config{}}
-	p.Hostsfile = "test/null"
+	p := &Pssh{Config: &Config{
+		Concurrency:    DefaultConcurrency,
+		MaxAgentConns:  DefaultMaxAgentConns,
+		MaxOutputBytes: DefaultMaxOutputBytes,
+	}}
+	p.Hostsfile = "test/missing"
 	b := bytes.Buffer{}
+	oldFlags := log.Flags()
+	oldOutput := log.Writer()
+	t.Cleanup(func() {
+		log.SetFlags(oldFlags)
+		log.SetOutput(oldOutput)
+	})
 	log.SetFlags(0)
 	log.SetOutput(&b)
 	p.Init()
@@ -412,6 +468,7 @@ func TestPsshRun(t *testing.T) {
 		t.Errorf("b=%s,want:read hosts..", b.String())
 	}
 	p.IgnoreHostKey = true
+	p.Hostsfile = "test/null"
 	b.Reset()
 	p.Run()
 	if b.String() != "" {
@@ -497,7 +554,7 @@ func TestReadIdentFiles(t *testing.T) {
 		{"./test", []string{"~/hoge"}, [][]byte{}},
 	}
 	for _, test := range tests {
-		os.Setenv("HOME", test.home)
+		t.Setenv("HOME", test.home)
 		p := &Pssh{Config: &Config{IdentFiles: test.identFiles}}
 		res := p.readIdentFiles()
 		if len(res) != len(test.want) {

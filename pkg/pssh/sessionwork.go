@@ -65,8 +65,18 @@ func (s *sessionWork) run(ctx context.Context, res *result, session sess) {
 		{name: "", err: nil},                  // 2
 		{name: "I/O err:", err: nil},          // 3
 	}
-	go readStream(ctx, res.stdout, stdout, errChs[0])
-	go readStream(ctx, res.stderr, stderr, errChs[1])
+	stdoutWriter := &cappedWriter{
+		dst:       res.stdout,
+		remaining: s.con.MaxOutputBytes,
+		truncated: &res.stdoutTruncated,
+	}
+	stderrWriter := &cappedWriter{
+		dst:       res.stderr,
+		remaining: s.con.MaxOutputBytes,
+		truncated: &res.stderrTruncated,
+	}
+	go readStream(ctx, stdoutWriter, stdout, errChs[0])
+	go readStream(ctx, stderrWriter, stderr, errChs[1])
 	err = session.Run(s.command)
 	if err != nil {
 		if ee, ok := err.(*ssh.ExitError); ok {
@@ -78,6 +88,12 @@ func (s *sessionWork) run(ctx context.Context, res *result, session sess) {
 	}
 	for i := 0; i < len(errChs); i++ {
 		errs[i].err = getErr(ctx, errChs[i])
+	}
+	if res.stdoutTruncated {
+		errs = append(errs, sessErr{name: "", err: fmt.Errorf("stdout exceeded %d bytes and was truncated", s.con.MaxOutputBytes)})
+	}
+	if res.stderrTruncated {
+		errs = append(errs, sessErr{name: "", err: fmt.Errorf("stderr exceeded %d bytes and was truncated", s.con.MaxOutputBytes)})
 	}
 	res.err = getAllError(errs)
 	s.errResult(ctx, res)

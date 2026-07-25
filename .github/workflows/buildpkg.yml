@@ -44,8 +44,13 @@ jobs:
         with:
           go-version-file: "go.mod"
       - name: Test
-        run: |
-          go test -v ./...
+        run: go test -race -covermode=atomic -coverprofile=coverage.txt ./...
+      - name: Validate installer
+        run: sh -n install.sh
+      - name: Lint
+        uses: golangci/golangci-lint-action@v9
+        with:
+          version: v2.11
 
   build-binary:
     runs-on: ubuntu-22.04
@@ -150,6 +155,9 @@ jobs:
           for arch in amd64 arm64;do
             mv linux-packages-${arch}/* .dist
           done
+          cd .dist
+          sha256sum *.tar.gz *.rpm *.deb > checksums.txt
+          cd ..
           ls -la .dist
           ls -la .dist>> $GITHUB_STEP_SUMMARY
       - name: Create release.md
@@ -163,7 +171,7 @@ jobs:
       - name: Release
         uses: softprops/action-gh-release@v2
         with:
-          prerelease: true
+          prerelease: false
           body_path: release.md
           fail_on_unmatched_files: true
           generate_release_notes: true
@@ -172,19 +180,4 @@ jobs:
             .dist/*.rpm
             .dist/*.deb
             .dist/*.tar.gz
-      - name: Create homebrew Formula
-        run: |
-          cp pack/Formula/template.rb gopssh.rb
-          sed -i -e "s/__version__/v${{ needs.info.outputs.ver }}/g" gopssh.rb
-          for os in darwin linux;do
-            for arch in amd64 arm64;do
-              sed -i -e "s/__${os}-${arch}_sha256__/$(sha256sum .dist/${os}-${arch}.tar.gz|awk '{print $1}')/" gopssh.rb
-            done
-          done
-          mkdir -p ~/.ssh/
-          echo "${{ secrets.BREWREPOKEY }}" >~/.ssh/id_ed25519 && chmod 600 ~/.ssh/id_ed25519
-          git config --global user.email "bot@github.com" && git config --global user.name "Github Actions"
-          git clone git@github.com:masahide/homebrew-tap.git && cd homebrew-tap
-          cp ../gopssh.rb Formula/ && git add Formula/gopssh.rb
-          git commit -am"gopssh v${{ needs.info.outputs.ver }}"
-          git push origin main
+            .dist/checksums.txt

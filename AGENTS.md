@@ -3,12 +3,12 @@
 ## Project Structure & Module Organization
 - `cmd/gopssh/main.go` provides the CLI entrypoint, with supporting helpers under `cmd/gopssh/gopssh/`.
 - Core parallel SSH logic, worker pools, and agent wrappers live in `pkg/pssh/`, which also houses unit tests and fixtures in `pkg/pssh/test/`.
-- Packaging utilities for Homebrew, RPM, and DEB builds are grouped under `pack/`, while release metadata lives in `releasenote.template.md`.
+- RPM and DEB packaging utilities are grouped under `pack/`; the curl-based installer is `install.sh`, and release metadata lives in `releasenote.template.md`.
 - The top-level `Makefile` orchestrates builds, tests, linting, and coverage aggregation; keep changes aligned with its targets.
 
 ## Build, Test, and Development Commands
 - `make build` compiles `cmd/gopssh` into a local `gopssh` binary; it is the default target and cleans stale artifacts.
-- `make test` runs race-enabled tests for both the CLI and library packages and merges coverage into `coverage.txt`.
+- `make test` runs race-enabled tests for all packages and writes coverage to `coverage.txt`.
 - `make lint` invokes the pinned `golangci-lint` binary from `./bin`; run `make setup` once to install it (requires network access).
 - For release builds, mirror the README example: `go build -ldflags "-X main.version=$(TAG) ..."` so version metadata stays accurate.
 
@@ -29,4 +29,5 @@
 
 ## Release & Packaging Notes
 - Build artifacts land in `.bin/`; confirm the binary version with `./gopssh -version` before running `pack/debpack` or `pack/rpmpack`.
+- Keep `install.sh` aligned with release archive names and the generated `checksums.txt` file.
 - Update `releasenote.template.md` alongside packaging changes so CI-driven releases stay coherent.
