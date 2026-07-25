@@ -49,13 +49,22 @@ func TestTopHelpDiscoversCommands(t *testing.T) {
 		if code != 0 || stderr != "" {
 			t.Fatalf("args=%v code=%d stderr=%q", args, code, stderr)
 		}
-		for _, command := range []string{"run", "doctor", "hosts", "config", "version", "completion", "help", "legacy"} {
+		for _, command := range []string{"run", "doctor", "hosts", "config", "version", "completion", "help"} {
 			if !strings.Contains(stdout, command) {
 				t.Errorf("args=%v help missing %q", args, command)
 			}
 		}
-		if strings.Contains(stdout, "gopssh -h hosts.txt") {
-			t.Errorf("top help contains legacy invocation: %q", stdout)
+		for _, legacyHelp := range []string{
+			"Legacy syntax remains supported; in legacy mode -h means hosts file:",
+			"gopssh -h hosts.txt -u root -p 10 -d uptime",
+			"Run 'gopssh help legacy' for full legacy help.",
+		} {
+			if !strings.Contains(stdout, legacyHelp) {
+				t.Errorf("args=%v help missing %q", args, legacyHelp)
+			}
+		}
+		if strings.Contains(stdout, "Help topics:") {
+			t.Errorf("top help uses ambiguous help topic list: %q", stdout)
 		}
 	}
 }

@@ -1578,9 +1578,6 @@ Commands:
   completion   Generate shell completion
   help         Show help for a command
 
-Help topics:
-  legacy       Show the legacy flag syntax
-
 Global options:
   --json       Emit stable JSON (run emits NDJSON)
   --help       Show this help
@@ -1589,6 +1586,10 @@ Examples:
   gopssh run --hosts-file hosts.txt --user root -- uptime
   gopssh --json doctor --hosts-file hosts.txt
   gopssh hosts validate --file hosts.txt
+
+Legacy syntax remains supported; in legacy mode -h means hosts file:
+  gopssh -h hosts.txt -u root -p 10 -d uptime
+  Run 'gopssh help legacy' for full legacy help.
 `
 }
 
