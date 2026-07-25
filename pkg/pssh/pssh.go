@@ -76,12 +76,9 @@ func newPrint(stdout, stderr io.Writer, colorMode bool) *print {
 
 func (p *print) init() {
 	if p.colorMode {
-		p.red = color.New(color.FgRed)
-		p.red.(*color.Color).SetWriter(p.stderr)
-		p.boldRed = color.New(color.FgRed).Add(color.Bold)
-		p.boldRed.(*color.Color).SetWriter(p.stderr)
-		p.green = color.New(color.FgGreen)
-		p.green.(*color.Color).SetWriter(p.stdout)
+		p.red = colorPrinter{color: color.New(color.FgRed), writer: p.stderr}
+		p.boldRed = colorPrinter{color: color.New(color.FgRed).Add(color.Bold), writer: p.stderr}
+		p.green = colorPrinter{color: color.New(color.FgGreen), writer: p.stdout}
 		return
 	}
 	p.red = writerPrinter{p.stderr}
@@ -98,6 +95,19 @@ func (p *print) Printf(format string, a ...interface{}) (n int, err error) {
 
 type writerPrinter struct {
 	io.Writer
+}
+
+type colorPrinter struct {
+	color  *color.Color
+	writer io.Writer
+}
+
+func (p colorPrinter) Print(a ...interface{}) (n int, err error) {
+	return p.color.Fprint(p.writer, a...)
+}
+
+func (p colorPrinter) Printf(format string, a ...interface{}) (n int, err error) {
+	return p.color.Fprintf(p.writer, format, a...)
 }
 
 func (p writerPrinter) Print(a ...interface{}) (n int, err error) {

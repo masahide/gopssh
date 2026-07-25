@@ -13,7 +13,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/fatih/color"
 	"github.com/pkg/errors"
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/crypto/ssh/agent"
@@ -61,22 +60,15 @@ func TestInit(t *testing.T) {
 		want      prn
 	}{
 		{false, writerPrinter{}},
-		{true, color.New()},
+		{true, colorPrinter{}},
 	}
 	for _, test := range tests {
 		p := &Pssh{
 			Config: &Config{ColorMode: test.colorMode},
 		}
 		p.Init()
-		if _, ok := test.want.(writerPrinter); ok {
-			if _, ok := p.red.(writerPrinter); !ok {
-				t.Errorf("res type :%T, want %T", p.red, test.want)
-			}
-		}
-		if _, ok := test.want.(*color.Color); ok {
-			if _, ok := p.red.(*color.Color); !ok {
-				t.Errorf("res type :%T, want %T", p.red, test.want)
-			}
+		if reflect.TypeOf(p.red) != reflect.TypeOf(test.want) {
+			t.Errorf("res type :%T, want %T", p.red, test.want)
 		}
 		if p.outputMemory.Used() != 0 || p.outputSpool.Used() != 0 {
 			t.Errorf("output budgets are not empty: memory=%d spool=%d", p.outputMemory.Used(), p.outputSpool.Used())
@@ -201,27 +193,31 @@ func TestPrint(t *testing.T) {
 }
 
 func TestPrintResultSeparatesStdoutAndStderr(t *testing.T) {
-	var stdout, stderr bytes.Buffer
-	p := &Pssh{
-		Config: &Config{ShowHostName: true},
-		print:  newPrint(&stdout, &stderr, false),
-	}
-	res := &result{
-		code:   1,
-		err:    errors.New("remote failed"),
-		stdout: newTestResultOutput("normal output\n"),
-		stderr: newTestResultOutput("error output\n"),
-	}
-	if err := p.printResult(res, "host1:22"); err != nil {
-		t.Fatal(err)
-	}
-	if stdout.String() != "normal output\n" {
-		t.Errorf("stdout=%q", stdout.String())
-	}
-	for _, want := range []string{"host1:22  result code 1", "result err: remote failed", "error output"} {
-		if !strings.Contains(stderr.String(), want) {
-			t.Errorf("stderr=%q, missing %q", stderr.String(), want)
-		}
+	for _, colorMode := range []bool{false, true} {
+		t.Run(fmt.Sprintf("color=%t", colorMode), func(t *testing.T) {
+			var stdout, stderr bytes.Buffer
+			p := &Pssh{
+				Config: &Config{ShowHostName: true},
+				print:  newPrint(&stdout, &stderr, colorMode),
+			}
+			res := &result{
+				code:   1,
+				err:    errors.New("remote failed"),
+				stdout: newTestResultOutput("normal output\n"),
+				stderr: newTestResultOutput("error output\n"),
+			}
+			if err := p.printResult(res, "host1:22"); err != nil {
+				t.Fatal(err)
+			}
+			if stdout.String() != "normal output\n" {
+				t.Errorf("stdout=%q", stdout.String())
+			}
+			for _, want := range []string{"host1:22  result code 1", "result err: remote failed", "error output"} {
+				if !strings.Contains(stderr.String(), want) {
+					t.Errorf("stderr=%q, missing %q", stderr.String(), want)
+				}
+			}
+		})
 	}
 }
 
