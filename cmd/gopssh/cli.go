@@ -84,7 +84,7 @@ type runOptions struct {
 
 func isModern(args []string) bool {
 	if len(args) == 0 {
-		return false
+		return true
 	}
 	if args[0] == "--help" {
 		return true
@@ -1556,6 +1556,8 @@ func helpForPath(path []string) string {
 		return versionHelpText()
 	case "gopssh completion":
 		return completionHelpText()
+	case "gopssh legacy":
+		return legacyHelpText()
 	default:
 		return ""
 	}
@@ -1576,6 +1578,9 @@ Commands:
   completion   Generate shell completion
   help         Show help for a command
 
+Help topics:
+  legacy       Show the legacy flag syntax
+
 Global options:
   --json       Emit stable JSON (run emits NDJSON)
   --help       Show this help
@@ -1584,9 +1589,32 @@ Examples:
   gopssh run --hosts-file hosts.txt --user root -- uptime
   gopssh --json doctor --hosts-file hosts.txt
   gopssh hosts validate --file hosts.txt
+`
+}
 
-Legacy syntax remains supported; in legacy mode -h means hosts file:
+func legacyHelpText() string {
+	var optionsHelp strings.Builder
+	fs := flag.NewFlagSet("gopssh legacy", flag.ContinueOnError)
+	fs.SetOutput(&optionsHelp)
+	config := defaultConfig()
+	options := defaultLegacyFlagOptions()
+	registerLegacyFlags(fs, &config, &options)
+	fs.Bool("version", false, "Show version")
+	fs.PrintDefaults()
+
+	return `Legacy flag syntax remains supported for compatibility.
+In legacy mode, -h means hosts file rather than help.
+
+Usage:
+  gopssh [legacy options] command [arguments...]
+
+Legacy options:
+` + optionsHelp.String() + `
+Example:
   gopssh -h hosts.txt -u root -p 10 -d uptime
+
+Use the subcommand syntax for new scripts:
+  gopssh run --hosts-file hosts.txt --user root --parallel 10 --show-host -- uptime
 `
 }
 

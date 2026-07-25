@@ -27,7 +27,7 @@ func TestModernDispatch(t *testing.T) {
 		args []string
 		want bool
 	}{
-		{[]string{}, false},
+		{[]string{}, true},
 		{[]string{"run"}, true},
 		{[]string{"--json", "doctor"}, true},
 		{[]string{"--help"}, true},
@@ -44,13 +44,36 @@ func TestModernDispatch(t *testing.T) {
 }
 
 func TestTopHelpDiscoversCommands(t *testing.T) {
-	code, stdout, stderr := executeForTest(t, "--help")
+	for _, args := range [][]string{nil, {"--help"}} {
+		code, stdout, stderr := executeForTest(t, args...)
+		if code != 0 || stderr != "" {
+			t.Fatalf("args=%v code=%d stderr=%q", args, code, stderr)
+		}
+		for _, command := range []string{"run", "doctor", "hosts", "config", "version", "completion", "help", "legacy"} {
+			if !strings.Contains(stdout, command) {
+				t.Errorf("args=%v help missing %q", args, command)
+			}
+		}
+		if strings.Contains(stdout, "gopssh -h hosts.txt") {
+			t.Errorf("top help contains legacy invocation: %q", stdout)
+		}
+	}
+}
+
+func TestLegacyHelpIsSeparateTopic(t *testing.T) {
+	code, stdout, stderr := executeForTest(t, "help", "legacy")
 	if code != 0 || stderr != "" {
 		t.Fatalf("code=%d stderr=%q", code, stderr)
 	}
-	for _, command := range []string{"run", "doctor", "hosts", "config", "version", "completion", "Legacy syntax"} {
-		if !strings.Contains(stdout, command) {
-			t.Errorf("help missing %q", command)
+	for _, text := range []string{
+		"gopssh [legacy options] command",
+		"-h string",
+		"host file",
+		"-version",
+		"gopssh run --hosts-file",
+	} {
+		if !strings.Contains(stdout, text) {
+			t.Errorf("legacy help missing %q:\n%s", text, stdout)
 		}
 	}
 }
