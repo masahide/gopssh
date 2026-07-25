@@ -37,8 +37,43 @@ func TestDefaultConfig(t *testing.T) {
 	if c.IdentityFileOnly {
 		t.Error("identity files must not disable SSH Agent by default")
 	}
+	if c.MaxBufferMemory != pssh.DefaultMaxBufferMemory {
+		t.Errorf("MaxBufferMemory=%d, want %d", c.MaxBufferMemory, pssh.DefaultMaxBufferMemory)
+	}
+	if c.MaxSpoolSize != pssh.DefaultMaxSpoolSize {
+		t.Errorf("MaxSpoolSize=%d, want %d", c.MaxSpoolSize, pssh.DefaultMaxSpoolSize)
+	}
 	if len(c.Kex) != 0 || len(c.Ciphers) != 0 || len(c.Macs) != 0 {
 		t.Error("secure SSH defaults must be used unless algorithms are explicitly configured")
+	}
+}
+
+func TestByteSizeValue(t *testing.T) {
+	tests := []struct {
+		input string
+		want  int64
+	}{
+		{"1", 1},
+		{"32KiB", 32 << 10},
+		{"128MiB", 128 << 20},
+		{"10GiB", 10 << 30},
+	}
+	for _, test := range tests {
+		got, err := parseByteSize(test.input)
+		if err != nil {
+			t.Fatalf("parseByteSize(%q): %v", test.input, err)
+		}
+		if got != test.want {
+			t.Errorf("parseByteSize(%q)=%d, want %d", test.input, got, test.want)
+		}
+		if formatted := formatByteSize(got); test.input != "1" && formatted != test.input {
+			t.Errorf("formatByteSize(%d)=%q, want %q", got, formatted, test.input)
+		}
+	}
+	for _, input := range []string{"", "0", "-1", "1MB", "abc"} {
+		if _, err := parseByteSize(input); err == nil {
+			t.Errorf("parseByteSize(%q) error=nil", input)
+		}
 	}
 }
 

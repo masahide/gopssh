@@ -5,7 +5,9 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"math"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -66,7 +68,9 @@ func newConfig() *pssh.Config {
 	c := defaultConfig()
 	flag.IntVar(&c.Concurrency, "p", c.Concurrency, "maximum concurrent SSH connections")
 	flag.IntVar(&c.MaxAgentConns, "a", c.MaxAgentConns, "Max ssh agent unix socket connections")
-	flag.Int64Var(&c.MaxOutputBytes, "max-output-bytes", c.MaxOutputBytes, "maximum buffered bytes per stdout/stderr stream and host")
+	flag.Var((*byteSizeValue)(&c.MaxBufferMemory), "max-buffer-memory", "maximum total memory used for buffered remote output before spilling to disk")
+	flag.Var((*byteSizeValue)(&c.MaxSpoolSize), "max-spool-size", "maximum total disk space used for spooled remote output")
+	flag.StringVar(&c.SpoolDir, "spool-dir", c.SpoolDir, "parent directory for temporary output files (default: system temporary directory)")
 	flag.StringVar(&c.User, "u", c.User, "username")
 	flag.StringVar(&c.Hostsfile, "h", c.Hostsfile, "host file")
 	flag.BoolVar(&c.SortPrint, "s", c.SortPrint, "sort the results and output")
@@ -92,19 +96,84 @@ func newConfig() *pssh.Config {
 
 func defaultConfig() pssh.Config {
 	return pssh.Config{
-		Concurrency:    pssh.DefaultConcurrency,
-		MaxAgentConns:  pssh.DefaultMaxAgentConns,
-		MaxOutputBytes: pssh.DefaultMaxOutputBytes,
-		User:           os.Getenv("USER"),
-		Hostsfile:      "",
-		ShowHostName:   false,
-		ColorMode:      true,
-		IgnoreHostKey:  false,
-		Debug:          false,
-		SortPrint:      true,
-		Timeout:        defaultTimeout,
-		SSHAuthSocket:  os.Getenv("SSH_AUTH_SOCK"),
+		Concurrency:     pssh.DefaultConcurrency,
+		MaxAgentConns:   pssh.DefaultMaxAgentConns,
+		MaxBufferMemory: pssh.DefaultMaxBufferMemory,
+		MaxSpoolSize:    pssh.DefaultMaxSpoolSize,
+		User:            os.Getenv("USER"),
+		Hostsfile:       "",
+		ShowHostName:    false,
+		ColorMode:       true,
+		IgnoreHostKey:   false,
+		Debug:           false,
+		SortPrint:       true,
+		Timeout:         defaultTimeout,
+		SSHAuthSocket:   os.Getenv("SSH_AUTH_SOCK"),
 	}
+}
+
+type byteSizeValue int64
+
+func (v *byteSizeValue) Set(input string) error {
+	size, err := parseByteSize(input)
+	if err != nil {
+		return err
+	}
+	*v = byteSizeValue(size)
+	return nil
+}
+
+func (v *byteSizeValue) String() string {
+	if v == nil {
+		return ""
+	}
+	return formatByteSize(int64(*v))
+}
+
+func (v *byteSizeValue) Get() any {
+	return int64(*v)
+}
+
+func parseByteSize(input string) (int64, error) {
+	value := strings.TrimSpace(input)
+	upper := strings.ToUpper(value)
+	multiplier := int64(1)
+	for _, unit := range []struct {
+		suffix     string
+		multiplier int64
+	}{
+		{"GIB", 1 << 30},
+		{"MIB", 1 << 20},
+		{"KIB", 1 << 10},
+		{"B", 1},
+	} {
+		if strings.HasSuffix(upper, unit.suffix) {
+			multiplier = unit.multiplier
+			value = strings.TrimSpace(value[:len(value)-len(unit.suffix)])
+			break
+		}
+	}
+	number, err := strconv.ParseInt(value, 10, 64)
+	if err != nil || number <= 0 || number > math.MaxInt64/multiplier {
+		return 0, fmt.Errorf("invalid byte size %q", input)
+	}
+	return number * multiplier, nil
+}
+
+func formatByteSize(size int64) string {
+	for _, unit := range []struct {
+		suffix string
+		size   int64
+	}{
+		{"GiB", 1 << 30},
+		{"MiB", 1 << 20},
+		{"KiB", 1 << 10},
+	} {
+		if size >= unit.size && size%unit.size == 0 {
+			return fmt.Sprintf("%d%s", size/unit.size, unit.suffix)
+		}
+	}
+	return fmt.Sprintf("%dB", size)
 }
 
 func configureCrypto(c *pssh.Config, legacy bool, kexAlgos, ciphers, macs string) {

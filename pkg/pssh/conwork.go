@@ -43,7 +43,7 @@ func (c *conWork) conWorker(ctx context.Context, config ssh.ClientConfig) {
 			res.err = fmt.Errorf("cannot connect [%s]: %w", c.host, err)
 			select {
 			case <-ctx.Done():
-				c.delReslt(res)
+				_ = c.delReslt(res)
 			case cmd.results <- res:
 			}
 		}

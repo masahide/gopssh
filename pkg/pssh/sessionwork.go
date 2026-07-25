@@ -38,6 +38,9 @@ func (s *sessionWork) getPipe(ctx context.Context, pipe func() (io.Reader, error
 
 func (s *sessionWork) result(ctx context.Context, err error, res *result) {
 	res.err = err
+	if res.code == 0 {
+		res.code = one
+	}
 	s.errResult(ctx, res)
 }
 
@@ -65,18 +68,8 @@ func (s *sessionWork) run(ctx context.Context, res *result, session sess) {
 		{name: "", err: nil},                  // 2
 		{name: "I/O err:", err: nil},          // 3
 	}
-	stdoutWriter := &cappedWriter{
-		dst:       res.stdout,
-		remaining: s.con.MaxOutputBytes,
-		truncated: &res.stdoutTruncated,
-	}
-	stderrWriter := &cappedWriter{
-		dst:       res.stderr,
-		remaining: s.con.MaxOutputBytes,
-		truncated: &res.stderrTruncated,
-	}
-	go readStream(ctx, stdoutWriter, stdout, errChs[0])
-	go readStream(ctx, stderrWriter, stderr, errChs[1])
+	go readStream(ctx, res.stdout, stdout, errChs[0])
+	go readStream(ctx, res.stderr, stderr, errChs[1])
 	err = session.Run(s.command)
 	if err != nil {
 		if ee, ok := err.(*ssh.ExitError); ok {
@@ -89,13 +82,19 @@ func (s *sessionWork) run(ctx context.Context, res *result, session sess) {
 	for i := 0; i < len(errChs); i++ {
 		errs[i].err = getErr(ctx, errChs[i])
 	}
-	if res.stdoutTruncated {
-		errs = append(errs, sessErr{name: "", err: fmt.Errorf("stdout exceeded %d bytes and was truncated", s.con.MaxOutputBytes)})
-	}
-	if res.stderrTruncated {
-		errs = append(errs, sessErr{name: "", err: fmt.Errorf("stderr exceeded %d bytes and was truncated", s.con.MaxOutputBytes)})
+	stdoutOutputErr := res.stdout.Finalize()
+	stderrOutputErr := res.stderr.Finalize()
+	errs = append(errs,
+		sessErr{name: "stdout output err:", err: stdoutOutputErr},
+		sessErr{name: "stderr output err:", err: stderrOutputErr},
+	)
+	if res.code == 0 && (stdoutOutputErr != nil || stderrOutputErr != nil) {
+		res.code = one
 	}
 	res.err = getAllError(errs)
+	if res.code == 0 && res.err != nil {
+		res.code = one
+	}
 	s.errResult(ctx, res)
 }
 func getAllError(errs []sessErr) error {
@@ -126,6 +125,7 @@ func (s *sessionWork) worker(ctx context.Context, conn client) {
 func (s *sessionWork) errResult(ctx context.Context, res *result) {
 	select {
 	case <-ctx.Done():
+		_ = s.con.delReslt(res)
 	case s.results <- res:
 	}
 }

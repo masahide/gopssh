@@ -30,11 +30,15 @@ Usage of ./gopssh:
     	use the legacy SSH algorithms and priority order
   -macs string
     	comma-separated MAC algorithms (default: secure SSH defaults)
-  -max-output-bytes int
-    	maximum buffered bytes per stdout/stderr stream and host (default 10485760)
+  -max-buffer-memory value
+    	maximum total memory used for buffered remote output before spilling to disk (default 128MiB)
+  -max-spool-size value
+    	maximum total disk space used for spooled remote output (default 10GiB)
   -p int
     	maximum concurrent SSH connections (default 32)
   -s	sort the results and output (default true)
+  -spool-dir string
+    	parent directory for temporary output files (default: system temporary directory)
   -timeout duration
     	maximum amount of time for the TCP connection to establish. (default 15s)
   -u string
@@ -47,6 +51,12 @@ example:
 ```bash
 ./gopssh -h <(echo host1 host2) ls -la /etc/
 ```
+
+Buffered remote output shares a 128MiB process-wide budget. When that budget is
+full, output is preserved in private temporary files under the system temporary
+directory. Spool files are limited to 10GiB in total; exceeding that limit or a
+local disk error makes gopssh return a non-zero status. These settings can be
+changed with `--max-buffer-memory`, `--max-spool-size`, and `--spool-dir`.
 
 ## Installation
 

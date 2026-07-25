@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"log"
 	"net"
 	"os"
@@ -77,11 +78,8 @@ func TestInit(t *testing.T) {
 				t.Errorf("res type :%T, want %T", p.red, test.want)
 			}
 		}
-		if p.stdoutPool.Get().(*bytes.Buffer).Len() != 0 {
-			t.Errorf("len:%d,want:0", p.stdoutPool.Get().(*bytes.Buffer).Len())
-		}
-		if p.stderrPool.Get().(*bytes.Buffer).Len() != 0 {
-			t.Errorf("len:%d,want:0", p.stderrPool.Get().(*bytes.Buffer).Len())
+		if p.outputMemory.Used() != 0 || p.outputSpool.Used() != 0 {
+			t.Errorf("output budgets are not empty: memory=%d spool=%d", p.outputMemory.Used(), p.outputSpool.Used())
 		}
 	}
 
@@ -136,6 +134,23 @@ func TestReadHostsRejectsMissingPort(t *testing.T) {
 	}
 	if _, err := readHosts(hostsFile); err == nil {
 		t.Fatal("readHosts() error=nil, want invalid host error")
+	}
+}
+
+func TestNormalizeHostRejectsInvalidPorts(t *testing.T) {
+	for _, host := range []string{"host:0", "host:65536", "host:70000", "host:-1", "host:abc"} {
+		t.Run(host, func(t *testing.T) {
+			if _, err := normalizeHost(host); err == nil {
+				t.Fatalf("normalizeHost(%q) error=nil", host)
+			}
+		})
+	}
+	for _, host := range []string{"host:1", "host:65535"} {
+		t.Run(host, func(t *testing.T) {
+			if _, err := normalizeHost(host); err != nil {
+				t.Fatalf("normalizeHost(%q) error=%v", host, err)
+			}
+		})
 	}
 }
 func TestGetHostKeyCallback(t *testing.T) {
@@ -194,10 +209,12 @@ func TestPrintResultSeparatesStdoutAndStderr(t *testing.T) {
 	res := &result{
 		code:   1,
 		err:    errors.New("remote failed"),
-		stdout: bytes.NewBufferString("normal output\n"),
-		stderr: bytes.NewBufferString("error output\n"),
+		stdout: newTestResultOutput("normal output\n"),
+		stderr: newTestResultOutput("error output\n"),
 	}
-	p.printResult(res, "host1:22")
+	if err := p.printResult(res, "host1:22"); err != nil {
+		t.Fatal(err)
+	}
 	if stdout.String() != "normal output\n" {
 		t.Errorf("stdout=%q", stdout.String())
 	}
@@ -210,9 +227,10 @@ func TestPrintResultSeparatesStdoutAndStderr(t *testing.T) {
 
 func TestValidate(t *testing.T) {
 	valid := Config{
-		Concurrency:    DefaultConcurrency,
-		MaxAgentConns:  DefaultMaxAgentConns,
-		MaxOutputBytes: DefaultMaxOutputBytes,
+		Concurrency:     DefaultConcurrency,
+		MaxAgentConns:   DefaultMaxAgentConns,
+		MaxBufferMemory: DefaultMaxBufferMemory,
+		MaxSpoolSize:    DefaultMaxSpoolSize,
 	}
 	tests := []struct {
 		name   string
@@ -220,7 +238,8 @@ func TestValidate(t *testing.T) {
 	}{
 		{"concurrency", func(c *Config) { c.Concurrency = 0 }},
 		{"max agent connections", func(c *Config) { c.MaxAgentConns = 0 }},
-		{"max output bytes", func(c *Config) { c.MaxOutputBytes = 0 }},
+		{"max buffer memory", func(c *Config) { c.MaxBufferMemory = 0 }},
+		{"max spool size", func(c *Config) { c.MaxSpoolSize = 0 }},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -254,6 +273,25 @@ func TestRunConWorkers(t *testing.T) {
 type mockPrin struct {
 	buf bytes.Buffer
 }
+
+type testResultOutput struct {
+	bytes.Buffer
+}
+
+func newTestResultOutput(value string) *testResultOutput {
+	result := &testResultOutput{}
+	_, _ = result.WriteString(value)
+	return result
+}
+
+func (o *testResultOutput) WriteTo(dst io.Writer) (int64, error) {
+	return o.Buffer.WriteTo(dst)
+}
+
+func (o *testResultOutput) Finalize() error { return nil }
+func (o *testResultOutput) Close() error    { return nil }
+func (o *testResultOutput) Err() error      { return nil }
+func (o *testResultOutput) Size() int64     { return int64(o.Len()) }
 
 func (p *mockPrin) Print(a ...interface{}) (n int, err error) {
 	fmt.Fprint(&p.buf, a...)
@@ -310,8 +348,8 @@ func TestPrintResults(t *testing.T) {
 				results <- &result{
 					conID:  c.id,
 					code:   c.code,
-					stdout: &bytes.Buffer{},
-					stderr: &bytes.Buffer{},
+					stdout: newTestResultOutput(""),
+					stderr: newTestResultOutput(""),
 				}
 			}
 		}()
@@ -431,8 +469,8 @@ host5  result code 0
 				results <- &result{
 					conID:  c.id,
 					code:   c.code,
-					stdout: &bytes.Buffer{},
-					stderr: &bytes.Buffer{},
+					stdout: newTestResultOutput(""),
+					stderr: newTestResultOutput(""),
 				}
 			}
 		}()
@@ -448,9 +486,10 @@ host5  result code 0
 
 func TestPsshRun(t *testing.T) {
 	p := &Pssh{Config: &Config{
-		Concurrency:    DefaultConcurrency,
-		MaxAgentConns:  DefaultMaxAgentConns,
-		MaxOutputBytes: DefaultMaxOutputBytes,
+		Concurrency:     DefaultConcurrency,
+		MaxAgentConns:   DefaultMaxAgentConns,
+		MaxBufferMemory: DefaultMaxBufferMemory,
+		MaxSpoolSize:    DefaultMaxSpoolSize,
 	}}
 	p.Hostsfile = "test/missing"
 	b := bytes.Buffer{}

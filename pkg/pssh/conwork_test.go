@@ -113,9 +113,10 @@ func TestConWorker(t *testing.T) {
 
 func TestConnectionFailureDoesNotCancelOtherHosts(t *testing.T) {
 	p := &Pssh{Config: &Config{
-		Concurrency:    2,
-		MaxAgentConns:  DefaultMaxAgentConns,
-		MaxOutputBytes: DefaultMaxOutputBytes,
+		Concurrency:     2,
+		MaxAgentConns:   DefaultMaxAgentConns,
+		MaxBufferMemory: DefaultMaxBufferMemory,
+		MaxSpoolSize:    DefaultMaxSpoolSize,
 	}}
 	p.Init()
 	p.sshDialer = hostSSHDial{}
@@ -140,7 +141,7 @@ func TestConnectionFailureDoesNotCancelOtherHosts(t *testing.T) {
 		select {
 		case result := <-results:
 			got[result.conID] = result.code
-			p.delReslt(result)
+			_ = p.delReslt(result)
 		case <-time.After(time.Second):
 			t.Fatal("timed out waiting for all host results")
 		}
