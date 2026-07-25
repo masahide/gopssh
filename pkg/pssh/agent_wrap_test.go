@@ -44,10 +44,21 @@ type mockNetDial struct{}
 
 func (n mockNetDial) Dial(network, address string) (net.Conn, error) { return &conMock{}, nil }
 
+type errorNetDial struct {
+	err error
+}
+
+func (d errorNetDial) Dial(network, address string) (net.Conn, error) {
+	return nil, d.err
+}
+
 func TestGetPut(t *testing.T) {
-	newNetDialFunc = newTestNetDial
 	cp := newConnPools("", 1)
-	a := cp.Get()
+	cp.netDialer = mockNetDial{}
+	a, err := cp.Get()
+	if err != nil {
+		t.Fatal(err)
+	}
 	if a == nil {
 		t.Error("cp.Get()==nil")
 	}
@@ -62,6 +73,22 @@ func TestDialSocket(t *testing.T) {
 	}
 	if con == nil {
 		t.Error("con==nil")
+	}
+}
+
+func TestGetReturnsPermanentDialError(t *testing.T) {
+	want := errors.New("socket unavailable")
+	cp := newConnPools("/missing/agent.sock", 1)
+	cp.netDialer = errorNetDial{err: want}
+
+	for i := 0; i < 2; i++ {
+		ka, err := cp.Get()
+		if ka != nil {
+			t.Fatalf("Get() keyAgent=%v, want nil", ka)
+		}
+		if !errors.Is(err, want) {
+			t.Fatalf("Get() error=%v, want %v", err, want)
+		}
 	}
 }
 
@@ -152,16 +179,7 @@ func TestNewAgentClient(t *testing.T) {
 	}
 }
 
-type testNetDial struct{}
-
-func (n *testNetDial) Dial(network, address string) (net.Conn, error) {
-	return &net.TCPConn{}, nil
-}
-
-func newTestNetDial() dialIface { return &testNetDial{} }
-
 func TestRemoveAll(t *testing.T) {
-	newNetDialFunc = newTestNetDial
 	cp := newConnPools("", 1)
 	cp.netDialer = mockNetDial{}
 	ac := newAgentClient(cp)
@@ -172,7 +190,6 @@ func TestRemoveAll(t *testing.T) {
 }
 
 func TestRemove(t *testing.T) {
-	newNetDialFunc = newTestNetDial
 	cp := newConnPools("", 1)
 	cp.netDialer = mockNetDial{}
 	ac := newAgentClient(cp)
@@ -182,7 +199,6 @@ func TestRemove(t *testing.T) {
 	}
 }
 func TestLock(t *testing.T) {
-	newNetDialFunc = newTestNetDial
 	cp := newConnPools("", 1)
 	cp.netDialer = mockNetDial{}
 	ac := newAgentClient(cp)
@@ -193,7 +209,6 @@ func TestLock(t *testing.T) {
 }
 
 func TestUnlock(t *testing.T) {
-	newNetDialFunc = newTestNetDial
 	cp := newConnPools("", 1)
 	cp.netDialer = mockNetDial{}
 	ac := newAgentClient(cp)
@@ -204,7 +219,6 @@ func TestUnlock(t *testing.T) {
 }
 
 func TestList(t *testing.T) {
-	newNetDialFunc = newTestNetDial
 	cp := newConnPools("", 1)
 	cp.netDialer = mockNetDial{}
 	cp.connPool = sync.Pool{New: func() interface{} {
@@ -223,7 +237,6 @@ func TestList(t *testing.T) {
 }
 
 func TestSign(t *testing.T) {
-	newNetDialFunc = newTestNetDial
 	cp := newConnPools("", 1)
 	cp.netDialer = mockNetDial{}
 	cp.connPool = sync.Pool{New: func() interface{} {
@@ -242,7 +255,6 @@ func TestSign(t *testing.T) {
 }
 
 func TestSignWithFlags(t *testing.T) {
-	newNetDialFunc = newTestNetDial
 	cp := newConnPools("", 1)
 	cp.netDialer = mockNetDial{}
 	cp.connPool = sync.Pool{New: func() interface{} {
@@ -261,7 +273,6 @@ func TestSignWithFlags(t *testing.T) {
 }
 
 func TestAdd(t *testing.T) {
-	newNetDialFunc = newTestNetDial
 	cp := newConnPools("", 1)
 	cp.netDialer = mockNetDial{}
 	cp.connPool = sync.Pool{New: func() interface{} {
@@ -277,7 +288,6 @@ func TestAdd(t *testing.T) {
 }
 
 func TestSigners(t *testing.T) {
-	newNetDialFunc = newTestNetDial
 	cp := newConnPools("", 1)
 	cp.netDialer = mockNetDial{}
 	cp.connPool = sync.Pool{New: func() interface{} {

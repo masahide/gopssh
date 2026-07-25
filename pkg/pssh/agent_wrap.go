@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
 	"net"
 	"sync"
 
@@ -35,27 +34,12 @@ func (n *netDial) Dial(network, address string) (net.Conn, error) { return net.D
 
 func newNetDial() dialIface { return &netDial{} }
 
-var newNetDialFunc func() dialIface
-
-func init() {
-	newNetDialFunc = newNetDial
-}
-
-func (cp *connPools) newConnPool() any {
-	ka, err := cp.newKeyAgent()
-	if err != nil {
-		log.Fatal(err)
-	}
-	return ka
-}
-
 func newConnPools(socket string, n int) *connPools {
 	cp := &connPools{
-		netDialer: newNetDialFunc(),
+		netDialer: newNetDial(),
 		sockFile:  socket,
 	}
 	cp.limit = make(chan struct{}, n)
-	cp.connPool = sync.Pool{New: cp.newConnPool}
 	return cp
 }
 
@@ -73,12 +57,23 @@ func (cp *connPools) newKeyAgent() (*keyAgent, error) {
 	return &ka, nil
 }
 
-func (cp *connPools) Get() *keyAgent {
+func (cp *connPools) Get() (*keyAgent, error) {
 	cp.limit <- struct{}{} // 空くまで待つ
-	return cp.connPool.Get().(*keyAgent)
+	if pooled := cp.connPool.Get(); pooled != nil {
+		return pooled.(*keyAgent), nil
+	}
+	ka, err := cp.newKeyAgent()
+	if err != nil {
+		<-cp.limit
+		return nil, err
+	}
+	return ka, nil
 }
 
 func (cp *connPools) Put(ka *keyAgent) {
+	if ka == nil {
+		return
+	}
 	cp.connPool.Put(ka)
 	<-cp.limit // 解放
 }
@@ -93,6 +88,7 @@ func (cp *connPools) dialSocket() (net.Conn, error) {
 			if terr, ok := err.(TemporaryError); ok && terr.Temporary() {
 				return err
 			}
+			return backoff.Permanent(err)
 		}
 		return nil
 	}, backoff.NewExponentialBackOff())
@@ -128,7 +124,10 @@ func (c *agentClient) Unlock(passphrase []byte) error {
 
 // List returns the identities known to the agent.
 func (c *agentClient) List() ([]*agent.Key, error) {
-	ka := c.Get()
+	ka, err := c.Get()
+	if err != nil {
+		return nil, err
+	}
 	defer c.Put(ka)
 	return ka.List()
 }
@@ -136,13 +135,19 @@ func (c *agentClient) List() ([]*agent.Key, error) {
 // Sign has the agent sign the data using a protocol 2 key as defined
 // in [PROTOCOL.agent] section 2.6.2.
 func (c *agentClient) Sign(key ssh.PublicKey, data []byte) (*ssh.Signature, error) {
-	ka := c.Get()
+	ka, err := c.Get()
+	if err != nil {
+		return nil, err
+	}
 	defer c.Put(ka)
 	return ka.Sign(key, data)
 }
 
 func (c *agentClient) SignWithFlags(key ssh.PublicKey, data []byte, flags agent.SignatureFlags) (*ssh.Signature, error) {
-	ka := c.Get()
+	ka, err := c.Get()
+	if err != nil {
+		return nil, err
+	}
 	defer c.Put(ka)
 	return ka.SignWithFlags(key, data, flags)
 }
@@ -176,7 +181,10 @@ func (c *agentClient) Signers() ([]ssh.Signer, error) {
 }
 
 func (c *agentClient) Extension(extensionType string, contents []byte) ([]byte, error) {
-	ka := c.Get()
+	ka, err := c.Get()
+	if err != nil {
+		return nil, err
+	}
 	defer c.Put(ka)
 	return ka.Extension(extensionType, contents)
 }

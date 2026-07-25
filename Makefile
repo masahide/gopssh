@@ -5,12 +5,13 @@ TEST_PATTERN?=.
 TEST_OPTIONS?=
 OS=$(shell uname -s)
 PKG?=./pkg/pssh
+GOLANGCI_LINT_VERSION?=v2.11.0
 
 export PATH := ./bin:$(PATH)
 
 # Install all the build and lint dependencies
 setup:
-	curl -sfL https://install.goreleaser.com/github.com/golangci/golangci-lint.sh | sh
+	GOBIN=$(CURDIR)/bin go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(GOLANGCI_LINT_VERSION)
 	go mod download
 .PHONY: setup
 
@@ -21,9 +22,7 @@ fmt:
 .PHONY: fmt
 
 test:
-	go test $(TEST_OPTIONS) -v -race -coverpkg=$(MAIN) -covermode=atomic -coverprofile=main_coverage.txt $(MAIN) -run $(TEST_PATTERN) -timeout=2m
-	go test $(TEST_OPTIONS) -v -race -coverpkg=$(PKG)  -covermode=atomic -coverprofile=pkg_coverage.txt  $(PKG)  -run $(TEST_PATTERN) -timeout=2m
-	cat main_coverage.txt pkg_coverage.txt > coverage.txt
+	go test $(TEST_OPTIONS) -v -race -covermode=atomic -coverprofile=coverage.txt $(SOURCE_FILES) -run $(TEST_PATTERN) -timeout=2m
 .PHONY: test
 
 cover: test
@@ -33,8 +32,7 @@ cover: test
 
 # Run all the linters
 lint:
-	./bin/golangci-lint run --tests=false --enable-all --disable=lll,wsl ./...
-	#gometalinter --enable=gofmt --deadline 3m --vendor ./...
+	./bin/golangci-lint run ./...
 .PHONY: lint
 
 # Run all the tests and code checks
@@ -46,7 +44,7 @@ build: clean $(BIN)
 .PHONY: build
 
 clean:
-	rm -f $(BIN)
+	rm -f $(BIN) coverage.txt
 .PHONY: clean
 
 $(BIN):

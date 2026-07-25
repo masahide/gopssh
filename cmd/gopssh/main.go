@@ -1,12 +1,17 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"io"
 	"log"
+	"math"
 	"os"
+	"os/signal"
+	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/masahide/gopssh/pkg/pssh"
@@ -17,14 +22,13 @@ import (
 const (
 	// https://man.openbsd.org/ssh_config#IdentityFile
 	defaultIdentityFiles = "~/.ssh/id_dsa,~/.ssh/id_ecdsa,~/.ssh/id_ed25519,~/.ssh/id_rsa"
-	defaultMaxAgent      = 50
 	defaultTimeout       = 15 * time.Second
 	paramErrCode         = 2
 )
 
 // nolint: gochecknoglobals
 var (
-	defaultMacsFlags = []string{
+	legacyMacs = []string{
 		ssh.InsecureHMACSHA196,
 		ssh.HMACSHA1,
 		ssh.HMACSHA256ETM,
@@ -32,7 +36,7 @@ var (
 		ssh.HMACSHA256,
 		ssh.HMACSHA512,
 	}
-	defaultKexAlgos = []string{
+	legacyKexAlgos = []string{
 		ssh.InsecureKeyExchangeDH1SHA1,
 		ssh.InsecureKeyExchangeDH14SHA1,
 		ssh.InsecureKeyExchangeDHGEXSHA1,
@@ -43,7 +47,7 @@ var (
 		ssh.KeyExchangeECDHP521,
 		ssh.KeyExchangeDH14SHA256,
 	}
-	defaultCiphersFlags = []string{
+	legacyCiphers = []string{
 		ssh.InsecureCipherRC4256,
 		ssh.CipherAES128GCM,
 		ssh.CipherAES256GCM,
@@ -59,25 +63,17 @@ var (
 )
 
 func newConfig() *pssh.Config {
-	kexAlgos := strings.Join(defaultKexAlgos, ",")
-	ciphersFlag := strings.Join(defaultCiphersFlags, ",")
-	macsFlag := strings.Join(defaultMacsFlags, ",")
+	kexAlgos := ""
+	ciphersFlag := ""
+	macsFlag := ""
 	identityFiles := defaultIdentityFiles
-	c := pssh.Config{
-		Concurrency:   0,
-		MaxAgentConns: defaultMaxAgent,
-		User:          os.Getenv("USER"),
-		Hostsfile:     "",
-		ShowHostName:  false,
-		ColorMode:     true,
-		IgnoreHostKey: false,
-		Debug:         false,
-		SortPrint:     true,
-		Timeout:       defaultTimeout,
-		SSHAuthSocket: os.Getenv("SSH_AUTH_SOCK"),
-	}
-	flag.IntVar(&c.Concurrency, "p", c.Concurrency, "concurrency (defalut \"0\" is unlimit)")
+	legacyCrypto := false
+	c := defaultConfig()
+	flag.IntVar(&c.Concurrency, "p", c.Concurrency, "maximum concurrent SSH connections")
 	flag.IntVar(&c.MaxAgentConns, "a", c.MaxAgentConns, "Max ssh agent unix socket connections")
+	flag.Var((*byteSizeValue)(&c.MaxBufferMemory), "max-buffer-memory", "maximum total memory used for buffered remote output before spilling to disk")
+	flag.Var((*byteSizeValue)(&c.MaxSpoolSize), "max-spool-size", "maximum total disk space used for spooled remote output")
+	flag.StringVar(&c.SpoolDir, "spool-dir", c.SpoolDir, "parent directory for temporary output files (default: system temporary directory)")
 	flag.StringVar(&c.User, "u", c.User, "username")
 	flag.StringVar(&c.Hostsfile, "h", c.Hostsfile, "host file")
 	flag.BoolVar(&c.SortPrint, "s", c.SortPrint, "sort the results and output")
@@ -86,20 +82,118 @@ func newConfig() *pssh.Config {
 	flag.BoolVar(&c.IgnoreHostKey, "k", c.IgnoreHostKey, "Do not check the host key")
 	flag.BoolVar(&c.Debug, "debug", c.Debug, "debug outputs")
 	flag.DurationVar(&c.Timeout, "timeout", c.Timeout, "maximum amount of time for the TCP connection to establish.")
-	flag.StringVar(&kexAlgos, "kex", kexAlgos, "allowed key exchanges algorithms")
-	flag.StringVar(&ciphersFlag, "ciphers", ciphersFlag, "allowed cipher algorithms")
-	flag.StringVar(&macsFlag, "macs", macsFlag, "allowed MAC algorithms")
+	flag.BoolVar(&legacyCrypto, "legacy-crypto", legacyCrypto, "use the legacy SSH algorithms and priority order")
+	flag.StringVar(&kexAlgos, "kex", kexAlgos, "comma-separated key exchange algorithms (default: secure SSH defaults)")
+	flag.StringVar(&ciphersFlag, "ciphers", ciphersFlag, "comma-separated cipher algorithms (default: secure SSH defaults)")
+	flag.StringVar(&macsFlag, "macs", macsFlag, "comma-separated MAC algorithms (default: secure SSH defaults)")
+	flag.BoolVar(&c.IdentityFileOnly, "identities-only", false, "use identity files only and disable SSH Agent authentication")
 	flag.StringVar(&identityFiles, "i", identityFiles, "identity files")
 	flag.Parse()
-	c.Kex = pssh.ToSlice(kexAlgos)
-	c.Ciphers = pssh.ToSlice(ciphersFlag)
-	c.Macs = pssh.ToSlice(macsFlag)
-	c.IdentityFileOnly = identityFiles != defaultIdentityFiles
+	configureCrypto(&c, legacyCrypto, kexAlgos, ciphersFlag, macsFlag)
 	c.IdentFiles = pssh.ToSlice(identityFiles)
 
 	// see: https://qiita.com/tanksuzuki/items/e712717675faf4efb07a#パイプで渡された時だけ処理する
 	c.StdinFlag = !term.IsTerminal(0)
 	return &c
+}
+
+func defaultConfig() pssh.Config {
+	return pssh.Config{
+		Concurrency:     pssh.DefaultConcurrency,
+		MaxAgentConns:   pssh.DefaultMaxAgentConns,
+		MaxBufferMemory: pssh.DefaultMaxBufferMemory,
+		MaxSpoolSize:    pssh.DefaultMaxSpoolSize,
+		User:            os.Getenv("USER"),
+		Hostsfile:       "",
+		ShowHostName:    false,
+		ColorMode:       true,
+		IgnoreHostKey:   false,
+		Debug:           false,
+		SortPrint:       true,
+		Timeout:         defaultTimeout,
+		SSHAuthSocket:   os.Getenv("SSH_AUTH_SOCK"),
+	}
+}
+
+type byteSizeValue int64
+
+func (v *byteSizeValue) Set(input string) error {
+	size, err := parseByteSize(input)
+	if err != nil {
+		return err
+	}
+	*v = byteSizeValue(size)
+	return nil
+}
+
+func (v *byteSizeValue) String() string {
+	if v == nil {
+		return ""
+	}
+	return formatByteSize(int64(*v))
+}
+
+func (v *byteSizeValue) Get() any {
+	return int64(*v)
+}
+
+func parseByteSize(input string) (int64, error) {
+	value := strings.TrimSpace(input)
+	upper := strings.ToUpper(value)
+	multiplier := int64(1)
+	for _, unit := range []struct {
+		suffix     string
+		multiplier int64
+	}{
+		{"GIB", 1 << 30},
+		{"MIB", 1 << 20},
+		{"KIB", 1 << 10},
+		{"B", 1},
+	} {
+		if strings.HasSuffix(upper, unit.suffix) {
+			multiplier = unit.multiplier
+			value = strings.TrimSpace(value[:len(value)-len(unit.suffix)])
+			break
+		}
+	}
+	number, err := strconv.ParseInt(value, 10, 64)
+	if err != nil || number <= 0 || number > math.MaxInt64/multiplier {
+		return 0, fmt.Errorf("invalid byte size %q", input)
+	}
+	return number * multiplier, nil
+}
+
+func formatByteSize(size int64) string {
+	for _, unit := range []struct {
+		suffix string
+		size   int64
+	}{
+		{"GiB", 1 << 30},
+		{"MiB", 1 << 20},
+		{"KiB", 1 << 10},
+	} {
+		if size >= unit.size && size%unit.size == 0 {
+			return fmt.Sprintf("%d%s", size/unit.size, unit.suffix)
+		}
+	}
+	return fmt.Sprintf("%dB", size)
+}
+
+func configureCrypto(c *pssh.Config, legacy bool, kexAlgos, ciphers, macs string) {
+	if legacy {
+		if kexAlgos == "" {
+			kexAlgos = strings.Join(legacyKexAlgos, ",")
+		}
+		if ciphers == "" {
+			ciphers = strings.Join(legacyCiphers, ",")
+		}
+		if macs == "" {
+			macs = strings.Join(legacyMacs, ",")
+		}
+	}
+	c.Kex = pssh.ToSlice(kexAlgos)
+	c.Ciphers = pssh.ToSlice(ciphers)
+	c.Macs = pssh.ToSlice(macs)
 }
 
 func checkFlag(w io.Writer) (ret int, exit bool) {
@@ -124,6 +218,13 @@ func main() {
 	if ret, exit := checkFlag(os.Stdout); exit {
 		os.Exit(ret)
 	}
+	if err := p.Validate(); err != nil {
+		log.Print(err)
+		os.Exit(paramErrCode)
+	}
 	p.Init()
-	os.Exit(p.Run())
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	code := p.RunContext(ctx)
+	stop()
+	os.Exit(code)
 }

@@ -54,13 +54,16 @@ func main() {
 	// http://ftp.rpm.org/max-rpm/ch-rpm-file-format.html
 	// ex: name-version-release.architecture.rpm
 	filename := s.Name + "-" + s.Version + "-" + s.Release + "." + s.Arch + ".rpm"
-	file, err := os.OpenFile(filename, os.O_CREATE|os.O_WRONLY, 0644)
+	file, err := os.OpenFile(filename, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o644)
 	if err != nil {
 		log.Fatalf("OpenFile(%s) err: %v", filename, err)
 	}
-	defer file.Close()
 	if err := r.Write(file); err != nil {
+		_ = file.Close()
 		log.Fatalf("write failed: %v", err)
+	}
+	if err := file.Close(); err != nil {
+		log.Fatalf("close failed: %v", err)
 	}
 	fmt.Println(filename)
 }
