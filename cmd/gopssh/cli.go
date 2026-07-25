@@ -90,7 +90,7 @@ func isModern(args []string) bool {
 		return true
 	}
 	if args[0] == "--json" {
-		return len(args) > 1 && contains(modernCommands, args[1])
+		return true
 	}
 	return contains(modernCommands, args[0]) || !strings.HasPrefix(args[0], "-")
 }
@@ -101,7 +101,18 @@ func executeModern(ctx context.Context, args []string, stdin io.Reader, stdout, 
 		jsonMode = true
 		args = args[1:]
 	}
-	if len(args) == 0 || args[0] == "--help" {
+	if len(args) == 0 {
+		if jsonMode {
+			return renderUsageError(stdout, stderr, true, newUsageError(
+				"missing_argument", "command is required", []string{"gopssh"}, "", nil, topUsage(),
+			))
+		}
+		if _, err := fmt.Fprint(stdout, topHelp()); err != nil {
+			return 1
+		}
+		return paramErrCode
+	}
+	if args[0] == "--help" {
 		if _, err := fmt.Fprint(stdout, topHelp()); err != nil {
 			return 1
 		}
@@ -1014,7 +1025,11 @@ func runHosts(args []string, stdout, stderr io.Writer, globalJSON bool) int {
 		fs.BoolVar(&strict, "strict", false, "duplicates are errors")
 	}
 	if err := fs.Parse(args[1:]); err != nil {
-		return renderUsageError(stdout, stderr, jsonMode, parseFlagError(err, path, []string{"--file", "--json", "--strict"}, strings.Join(path, " ")+" --file <path>"))
+		known := []string{"--file", "--json"}
+		if subcommand == "validate" {
+			known = append(known, "--strict")
+		}
+		return renderUsageError(stdout, stderr, jsonMode, parseFlagError(err, path, known, strings.Join(path, " ")+" --file <path>"))
 	}
 	if file == "" || fs.NArg() != 0 {
 		return renderUsageError(stdout, stderr, jsonMode, newUsageError(
@@ -1146,11 +1161,22 @@ func runDoctor(ctx context.Context, args []string, stdout, stderr io.Writer, glo
 		options.identities = pssh.ToSlice(defaultIdentityFiles)
 	}
 	configureCrypto(&options.config, options.legacyCrypto, options.kex, options.ciphers, options.macs)
+	var targets []string
+	var targetsErr error
+	if connect {
+		targets, targetsErr = loadTargets(options.hostsFile, nil)
+		if targetsErr == nil && len(targets) == 0 {
+			return renderUsageError(stdout, stderr, jsonMode, newUsageError(
+				"missing_argument", "at least one target is required when --connect is set; use --hosts-file",
+				[]string{"gopssh", "doctor"}, "--connect", nil,
+				"gopssh doctor --connect --hosts-file <path> [options]",
+			))
+		}
+	}
 	checks := doctorChecks(options, stdout, stderr)
 	if connect {
-		targets, err := loadTargets(options.hostsFile, nil)
-		if err != nil {
-			checks = append(checks, doctorCheck{Name: "network", OK: false, Required: true, Message: err.Error()})
+		if targetsErr != nil {
+			checks = append(checks, doctorCheck{Name: "network", OK: false, Required: true, Message: targetsErr.Error()})
 		} else {
 			options.config.IdentFiles = options.identities
 			probe := &pssh.Pssh{Config: &options.config}

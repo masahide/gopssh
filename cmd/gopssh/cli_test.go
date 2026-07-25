@@ -29,7 +29,10 @@ func TestModernDispatch(t *testing.T) {
 	}{
 		{[]string{}, true},
 		{[]string{"run"}, true},
+		{[]string{"--json"}, true},
 		{[]string{"--json", "doctor"}, true},
+		{[]string{"--json", "hosst"}, true},
+		{[]string{"--json", "completely-unrelated"}, true},
 		{[]string{"--help"}, true},
 		{[]string{"hosst"}, true},
 		{[]string{"-h", "hosts", "run"}, false},
@@ -44,14 +47,20 @@ func TestModernDispatch(t *testing.T) {
 }
 
 func TestTopHelpDiscoversCommands(t *testing.T) {
-	for _, args := range [][]string{nil, {"--help"}} {
-		code, stdout, stderr := executeForTest(t, args...)
-		if code != 0 || stderr != "" {
-			t.Fatalf("args=%v code=%d stderr=%q", args, code, stderr)
+	for _, test := range []struct {
+		args     []string
+		wantCode int
+	}{
+		{args: nil, wantCode: paramErrCode},
+		{args: []string{"--help"}, wantCode: 0},
+	} {
+		code, stdout, stderr := executeForTest(t, test.args...)
+		if code != test.wantCode || stderr != "" {
+			t.Fatalf("args=%v code=%d want=%d stderr=%q", test.args, code, test.wantCode, stderr)
 		}
 		for _, command := range []string{"run", "doctor", "hosts", "config", "version", "completion", "help"} {
 			if !strings.Contains(stdout, command) {
-				t.Errorf("args=%v help missing %q", args, command)
+				t.Errorf("args=%v help missing %q", test.args, command)
 			}
 		}
 		for _, legacyHelp := range []string{
@@ -60,11 +69,38 @@ func TestTopHelpDiscoversCommands(t *testing.T) {
 			"Run 'gopssh help legacy' for full legacy help.",
 		} {
 			if !strings.Contains(stdout, legacyHelp) {
-				t.Errorf("args=%v help missing %q", args, legacyHelp)
+				t.Errorf("args=%v help missing %q", test.args, legacyHelp)
 			}
 		}
 		if strings.Contains(stdout, "Help topics:") {
 			t.Errorf("top help uses ambiguous help topic list: %q", stdout)
+		}
+	}
+}
+
+func TestTopLevelJSONCommandErrors(t *testing.T) {
+	for _, args := range [][]string{
+		{"--json"},
+		{"--json", "hosst"},
+		{"--json", "completely-unrelated"},
+	} {
+		code, stdout, stderr := executeForTest(t, args...)
+		if code != paramErrCode {
+			t.Fatalf("args=%v code=%d", args, code)
+		}
+		var envelope usageEnvelope
+		if err := json.Unmarshal([]byte(stdout), &envelope); err != nil {
+			t.Fatalf("args=%v invalid JSON %q: %v", args, stdout, err)
+		}
+		if envelope.Error.HelpCommand != "gopssh --help" ||
+			!strings.Contains(stderr, topHelp()) {
+			t.Fatalf("args=%v error=%+v stderr=%q", args, envelope.Error, stderr)
+		}
+		if len(args) == 1 && envelope.Error.Code != "missing_argument" {
+			t.Errorf("args=%v error code=%q", args, envelope.Error.Code)
+		}
+		if len(args) > 1 && envelope.Error.Code != "unknown_command" {
+			t.Errorf("args=%v error code=%q", args, envelope.Error.Code)
 		}
 	}
 }
@@ -331,6 +367,16 @@ func TestHostsListAndValidate(t *testing.T) {
 	}
 }
 
+func TestHostsListDoesNotSuggestValidateOnlyOption(t *testing.T) {
+	code, _, stderr := executeForTest(t, "hosts", "list", "--strct")
+	if code != paramErrCode {
+		t.Fatalf("code=%d stderr=%q", code, stderr)
+	}
+	if strings.Contains(stderr, "--strict") {
+		t.Fatalf("list suggested validate-only option: %q", stderr)
+	}
+}
+
 func TestDoctorJSONIsProducedOnFailure(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("SSH_AUTH_SOCK", "")
@@ -348,6 +394,22 @@ func TestDoctorJSONIsProducedOnFailure(t *testing.T) {
 	}
 	if payload.SchemaVersion != schemaVersion || payload.OK || len(payload.Checks) == 0 {
 		t.Fatalf("payload=%+v", payload)
+	}
+}
+
+func TestDoctorConnectRequiresTargets(t *testing.T) {
+	code, stdout, stderr := executeForTest(t, "--json", "doctor", "--connect")
+	if code != paramErrCode {
+		t.Fatalf("code=%d stdout=%q stderr=%q", code, stdout, stderr)
+	}
+	var envelope usageEnvelope
+	if err := json.Unmarshal([]byte(stdout), &envelope); err != nil {
+		t.Fatalf("invalid JSON %q: %v", stdout, err)
+	}
+	if envelope.Error.Code != "missing_argument" ||
+		envelope.Error.HelpCommand != "gopssh doctor --help" ||
+		!strings.Contains(stderr, doctorHelpText()) {
+		t.Fatalf("error=%+v stderr=%q", envelope.Error, stderr)
 	}
 }
 
