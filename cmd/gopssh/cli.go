@@ -262,8 +262,9 @@ func runFlagSet(options *runOptions) (*flag.FlagSet, []string) {
 }
 
 func runModern(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.Writer, globalJSON bool) int {
-	jsonMode := globalJSON || requestedJSON(args)
-	if hasHelp(args) {
+	control := scanControlFlags(args, true)
+	jsonMode := globalJSON || control.json
+	if control.help {
 		if jsonMode {
 			return renderJSONHelpError(stdout, stderr, []string{"gopssh", "run"}, runUsage())
 		}
@@ -283,6 +284,12 @@ func runModern(ctx context.Context, args []string, stdin io.Reader, stdout, stde
 		options.identities = pssh.ToSlice(defaultIdentityFiles)
 	}
 	commandArgs := fs.Args()
+	if options.command == "" && len(commandArgs) > 0 && !hasArgumentDelimiter(args) {
+		return renderUsageError(stdout, stderr, options.json, newUsageError(
+			"invalid_argument", "command arguments must follow --; use --command for a literal shell command",
+			[]string{"gopssh", "run"}, commandArgs[0], nil, runUsage(),
+		))
+	}
 	if options.command != "" && len(commandArgs) > 0 {
 		return renderUsageError(stdout, stderr, options.json, newUsageError(
 			"conflicting_options", "--command and command arguments after -- are mutually exclusive",
@@ -1485,24 +1492,95 @@ func runCompletion(args []string, stdout, stderr io.Writer, jsonMode bool) int {
 }
 
 func hasHelp(args []string) bool {
-	for _, arg := range args {
-		if arg == "--" {
-			return false
-		}
-		if arg == "-h" || arg == "--help" {
-			return true
-		}
-	}
-	return false
+	return scanControlFlags(args, false).help
 }
 
 func requestedJSON(args []string) bool {
+	return scanControlFlags(args, false).json
+}
+
+type controlFlagScan struct {
+	help bool
+	json bool
+}
+
+func scanControlFlags(args []string, stopAtPositional bool) controlFlagScan {
+	var result controlFlagScan
+	skipValue := false
+	unknownOption := false
 	for _, arg := range args {
+		if skipValue {
+			skipValue = false
+			continue
+		}
 		if arg == "--" {
 			break
 		}
-		if arg == "--json" {
+		name, _, hasInlineValue := strings.Cut(arg, "=")
+		if controlScanFlagTakesValue(name) {
+			skipValue = !hasInlineValue
+			continue
+		}
+		if stopAtPositional && !strings.HasPrefix(arg, "-") {
+			if !unknownOption {
+				break
+			}
+			continue
+		}
+		if strings.HasPrefix(arg, "-") && !controlScanKnownFlag(name) {
+			unknownOption = true
+		}
+		switch arg {
+		case "-h", "--help":
+			result.help = true
+		case "--json":
+			result.json = true
+		}
+	}
+	return result
+}
+
+func controlScanKnownFlag(name string) bool {
+	if controlScanFlagTakesValue(name) {
+		return true
+	}
+	switch name {
+	case "-h", "--help", "--identities-only", "--show-host",
+		"--insecure-ignore-host-key", "--legacy-crypto", "--debug",
+		"--dry-run", "--json", "--stdin", "--connect", "--strict":
+		return true
+	default:
+		return false
+	}
+}
+
+func controlScanFlagTakesValue(name string) bool {
+	switch name {
+	case "--hosts-file", "-H", "--host", "--user", "-u", "--parallel", "-p",
+		"--max-agent-connections", "--identity", "-i", "--connect-timeout",
+		"--order", "--color", "--kex", "--ciphers", "--macs",
+		"--max-buffer-memory", "--max-spool-size", "--spool-dir",
+		"--output-dir", "--exit-policy", "--command", "--stdin-file",
+		"--file", "--limit":
+		return true
+	default:
+		return false
+	}
+}
+
+func hasArgumentDelimiter(args []string) bool {
+	skipValue := false
+	for _, arg := range args {
+		if skipValue {
+			skipValue = false
+			continue
+		}
+		if arg == "--" {
 			return true
+		}
+		name, _, hasInlineValue := strings.Cut(arg, "=")
+		if controlScanFlagTakesValue(name) {
+			skipValue = !hasInlineValue
 		}
 	}
 	return false

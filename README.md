@@ -45,7 +45,8 @@ gopssh run \
 After `--`, each argument is safely single-quoted for a POSIX shell before
 being passed to the remote shell, preserving argument boundaries. Use
 `--command` when you need to pass a complex shell expression as-is. These two
-forms are mutually exclusive.
+forms are mutually exclusive. When `--command` is not used, the `--` delimiter
+before the command is required.
 
 You can combine `-H, --hosts-file` with the repeatable `--host` option. Targets
 are processed in hosts-file order, followed by `--host` argument order.

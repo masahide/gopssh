@@ -244,6 +244,80 @@ func TestRunCommandSourcesAreExclusive(t *testing.T) {
 	}
 }
 
+func TestControlFlagNamesCanBeFlagValues(t *testing.T) {
+	t.Run("help is command value in JSON mode", func(t *testing.T) {
+		code, stdout, stderr := executeForTest(t,
+			"run", "--json", "--dry-run", "--host", "host1",
+			"--command", "--help",
+		)
+		if code != 0 || stderr != "" {
+			t.Fatalf("code=%d stdout=%q stderr=%q", code, stdout, stderr)
+		}
+		var plan struct {
+			Command string `json:"command"`
+		}
+		if err := json.Unmarshal([]byte(stdout), &plan); err != nil {
+			t.Fatalf("invalid JSON %q: %v", stdout, err)
+		}
+		if plan.Command != "--help" {
+			t.Fatalf("command=%q, want --help", plan.Command)
+		}
+	})
+
+	t.Run("json is command value in text mode", func(t *testing.T) {
+		code, stdout, stderr := executeForTest(t,
+			"run", "--dry-run", "--host", "host1",
+			"--command", "--json",
+		)
+		if code != 0 || stderr != "" {
+			t.Fatalf("code=%d stdout=%q stderr=%q", code, stdout, stderr)
+		}
+		if !strings.Contains(stdout, "Command: --json") || json.Valid([]byte(stdout)) {
+			t.Fatalf("unexpected output: %q", stdout)
+		}
+	})
+
+	for _, args := range [][]string{
+		{"run", "--dry-run", "--host", "host1", "ls", "--help"},
+		{"run", "--dry-run", "--host", "host1", "echo", "--json"},
+	} {
+		code, stdout, stderr := executeForTest(t, args...)
+		if code != paramErrCode || stdout != "" ||
+			!strings.Contains(stderr, "command arguments must follow --") {
+			t.Errorf("args=%v code=%d stdout=%q stderr=%q", args, code, stdout, stderr)
+		}
+	}
+}
+
+func TestControlFlagScannerSkipsOptionValues(t *testing.T) {
+	for _, args := range [][]string{
+		{"--identity", "--help"},
+		{"--file", "--json"},
+		{"--limit=10", "--help"},
+		{"--command=--help", "--json"},
+	} {
+		scan := scanControlFlags(args, false)
+		switch {
+		case reflect.DeepEqual(args, []string{"--limit=10", "--help"}):
+			if !scan.help {
+				t.Errorf("args=%v help=false", args)
+			}
+		case reflect.DeepEqual(args, []string{"--command=--help", "--json"}):
+			if !scan.json {
+				t.Errorf("args=%v json=false", args)
+			}
+		case scan.help || scan.json:
+			t.Errorf("args=%v scan=%+v", args, scan)
+		}
+	}
+	if hasArgumentDelimiter([]string{"--identity", "--", "uptime"}) {
+		t.Error("flag value was treated as the command delimiter")
+	}
+	if !hasArgumentDelimiter([]string{"--identity", "key", "--", "uptime"}) {
+		t.Error("command delimiter was not detected")
+	}
+}
+
 type trackingReader struct {
 	reads int
 }
@@ -269,6 +343,7 @@ func TestRunRequiresTargetsAndCommand(t *testing.T) {
 	for _, args := range [][]string{
 		{"run", "--", "uptime"},
 		{"run", "--host", "host1"},
+		{"run", "--host", "host1", "uptime"},
 	} {
 		code, _, stderr := executeForTest(t, args...)
 		if code != 2 || !strings.Contains(stderr, "Usage:") {
