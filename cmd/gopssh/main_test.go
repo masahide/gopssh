@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"errors"
 	"flag"
 	"os"
 	"reflect"
@@ -140,5 +141,38 @@ func TestCheckFlag(t *testing.T) {
 		if ret != test.wantRet || exit != test.wantExit {
 			t.Errorf("%d ret=%d exit=%t, want ret=%d exit=%t", i, ret, exit, test.wantRet, test.wantExit)
 		}
+	}
+}
+
+func TestSignalExitCode(t *testing.T) {
+	if got := signalExitCode(0, nil); got != 0 {
+		t.Errorf("no signal code=%d", got)
+	}
+	if got := signalExitCode(1, errors.New("received signal: interrupt")); got != 130 {
+		t.Errorf("SIGINT code=%d", got)
+	}
+	if got := signalExitCode(1, errors.New("received signal: terminated")); got != 143 {
+		t.Errorf("SIGTERM code=%d", got)
+	}
+}
+
+func TestLegacyParserStopsAtCommandAndPreservesBooleanValues(t *testing.T) {
+	oldArgs := os.Args
+	oldCommandLine := flag.CommandLine
+	t.Cleanup(func() {
+		os.Args = oldArgs
+		flag.CommandLine = oldCommandLine
+	})
+	flag.CommandLine = flag.NewFlagSet("gopssh", flag.ContinueOnError)
+	os.Args = []string{
+		"gopssh", "-h", "hosts.txt", "-c=false", "-s=false", "--debug",
+		"run", "--something",
+	}
+	config := newConfig()
+	if config.Hostsfile != "hosts.txt" || config.ColorMode || config.SortPrint || !config.Debug {
+		t.Fatalf("legacy config=%+v", config)
+	}
+	if got, want := flag.Args(), []string{"run", "--something"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("legacy command args=%v, want %v", got, want)
 	}
 }

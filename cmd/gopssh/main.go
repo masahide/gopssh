@@ -63,38 +63,50 @@ var (
 )
 
 func newConfig() *pssh.Config {
-	kexAlgos := ""
-	ciphersFlag := ""
-	macsFlag := ""
-	identityFiles := defaultIdentityFiles
-	legacyCrypto := false
 	c := defaultConfig()
-	flag.IntVar(&c.Concurrency, "p", c.Concurrency, "maximum concurrent SSH connections")
-	flag.IntVar(&c.MaxAgentConns, "a", c.MaxAgentConns, "Max ssh agent unix socket connections")
-	flag.Var((*byteSizeValue)(&c.MaxBufferMemory), "max-buffer-memory", "maximum total memory used for buffered remote output before spilling to disk")
-	flag.Var((*byteSizeValue)(&c.MaxSpoolSize), "max-spool-size", "maximum total disk space used for spooled remote output")
-	flag.StringVar(&c.SpoolDir, "spool-dir", c.SpoolDir, "parent directory for temporary output files (default: system temporary directory)")
-	flag.StringVar(&c.User, "u", c.User, "username")
-	flag.StringVar(&c.Hostsfile, "h", c.Hostsfile, "host file")
-	flag.BoolVar(&c.SortPrint, "s", c.SortPrint, "sort the results and output")
-	flag.BoolVar(&c.ShowHostName, "d", c.ShowHostName, "show hostname")
-	flag.BoolVar(&c.ColorMode, "c", c.ColorMode, "colorized outputs")
-	flag.BoolVar(&c.IgnoreHostKey, "k", c.IgnoreHostKey, "Do not check the host key")
-	flag.BoolVar(&c.Debug, "debug", c.Debug, "debug outputs")
-	flag.DurationVar(&c.Timeout, "timeout", c.Timeout, "maximum amount of time for the TCP connection to establish.")
-	flag.BoolVar(&legacyCrypto, "legacy-crypto", legacyCrypto, "use the legacy SSH algorithms and priority order")
-	flag.StringVar(&kexAlgos, "kex", kexAlgos, "comma-separated key exchange algorithms (default: secure SSH defaults)")
-	flag.StringVar(&ciphersFlag, "ciphers", ciphersFlag, "comma-separated cipher algorithms (default: secure SSH defaults)")
-	flag.StringVar(&macsFlag, "macs", macsFlag, "comma-separated MAC algorithms (default: secure SSH defaults)")
-	flag.BoolVar(&c.IdentityFileOnly, "identities-only", false, "use identity files only and disable SSH Agent authentication")
-	flag.StringVar(&identityFiles, "i", identityFiles, "identity files")
+	options := defaultLegacyFlagOptions()
+	registerLegacyFlags(flag.CommandLine, &c, &options)
 	flag.Parse()
-	configureCrypto(&c, legacyCrypto, kexAlgos, ciphersFlag, macsFlag)
-	c.IdentFiles = pssh.ToSlice(identityFiles)
+	configureCrypto(&c, options.legacyCrypto, options.kexAlgos, options.ciphers, options.macs)
+	c.IdentFiles = pssh.ToSlice(options.identityFiles)
 
 	// see: https://qiita.com/tanksuzuki/items/e712717675faf4efb07a#パイプで渡された時だけ処理する
 	c.StdinFlag = !term.IsTerminal(0)
 	return &c
+}
+
+type legacyFlagOptions struct {
+	kexAlgos      string
+	ciphers       string
+	macs          string
+	identityFiles string
+	legacyCrypto  bool
+}
+
+func defaultLegacyFlagOptions() legacyFlagOptions {
+	return legacyFlagOptions{identityFiles: defaultIdentityFiles}
+}
+
+func registerLegacyFlags(fs *flag.FlagSet, c *pssh.Config, options *legacyFlagOptions) {
+	fs.IntVar(&c.Concurrency, "p", c.Concurrency, "maximum concurrent SSH connections")
+	fs.IntVar(&c.MaxAgentConns, "a", c.MaxAgentConns, "Max ssh agent unix socket connections")
+	fs.Var((*byteSizeValue)(&c.MaxBufferMemory), "max-buffer-memory", "maximum total memory used for buffered remote output before spilling to disk")
+	fs.Var((*byteSizeValue)(&c.MaxSpoolSize), "max-spool-size", "maximum total disk space used for spooled remote output")
+	fs.StringVar(&c.SpoolDir, "spool-dir", c.SpoolDir, "parent directory for temporary output files (default: system temporary directory)")
+	fs.StringVar(&c.User, "u", c.User, "username")
+	fs.StringVar(&c.Hostsfile, "h", c.Hostsfile, "host file")
+	fs.BoolVar(&c.SortPrint, "s", c.SortPrint, "sort the results and output")
+	fs.BoolVar(&c.ShowHostName, "d", c.ShowHostName, "show hostname")
+	fs.BoolVar(&c.ColorMode, "c", c.ColorMode, "colorized outputs")
+	fs.BoolVar(&c.IgnoreHostKey, "k", c.IgnoreHostKey, "Do not check the host key")
+	fs.BoolVar(&c.Debug, "debug", c.Debug, "debug outputs")
+	fs.DurationVar(&c.Timeout, "timeout", c.Timeout, "maximum amount of time for the TCP connection to establish.")
+	fs.BoolVar(&options.legacyCrypto, "legacy-crypto", options.legacyCrypto, "use the legacy SSH algorithms and priority order")
+	fs.StringVar(&options.kexAlgos, "kex", options.kexAlgos, "comma-separated key exchange algorithms (default: secure SSH defaults)")
+	fs.StringVar(&options.ciphers, "ciphers", options.ciphers, "comma-separated cipher algorithms (default: secure SSH defaults)")
+	fs.StringVar(&options.macs, "macs", options.macs, "comma-separated MAC algorithms (default: secure SSH defaults)")
+	fs.BoolVar(&c.IdentityFileOnly, "identities-only", false, "use identity files only and disable SSH Agent authentication")
+	fs.StringVar(&options.identityFiles, "i", options.identityFiles, "identity files")
 }
 
 func defaultConfig() pssh.Config {
@@ -213,6 +225,24 @@ func checkFlag(w io.Writer) (ret int, exit bool) {
 }
 
 func main() {
+	if isModern(os.Args[1:]) {
+		log.SetFlags(0)
+		ctx, cancel := context.WithCancelCause(context.Background())
+		signalChannel := make(chan os.Signal, 1)
+		signal.Notify(signalChannel, os.Interrupt, syscall.SIGTERM)
+		defer signal.Stop(signalChannel)
+		go func() {
+			select {
+			case received := <-signalChannel:
+				cancel(fmt.Errorf("received signal: %s", received))
+			case <-ctx.Done():
+			}
+		}()
+		code := executeModern(ctx, os.Args[1:], os.Stdin, os.Stdout, os.Stderr)
+		code = signalExitCode(code, context.Cause(ctx))
+		cancel(nil)
+		os.Exit(code)
+	}
 	log.SetFlags(log.LstdFlags | log.Lshortfile)
 	p := &pssh.Pssh{Config: newConfig()}
 	if ret, exit := checkFlag(os.Stdout); exit {
@@ -227,4 +257,14 @@ func main() {
 	code := p.RunContext(ctx)
 	stop()
 	os.Exit(code)
+}
+
+func signalExitCode(code int, cause error) int {
+	if cause == nil {
+		return code
+	}
+	if strings.Contains(cause.Error(), syscall.SIGTERM.String()) {
+		return 143
+	}
+	return 130
 }

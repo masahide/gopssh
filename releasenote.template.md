@@ -1,5 +1,9 @@
 ## Installation
 
+This release adds the modern `run`, `doctor`, `hosts`, `config`, `version`, and
+`completion` command interface, stable JSON/NDJSON output, dry-run planning,
+and per-target output files. Existing flag-first command lines remain supported.
+
 ### macOS / Linux
 
 ```bash

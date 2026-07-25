@@ -159,7 +159,7 @@ func TestConWorker(t *testing.T) {
 				t.Error(res.err)
 			}
 			if test.err != nil {
-				if res.err == nil || res.code != connectFailureCode {
+				if res.err == nil || res.code != connectFailureCode || res.kind != ResultConnectionFailed {
 					t.Errorf("res=%+v, want connection failure", res)
 				}
 			}
@@ -200,6 +200,9 @@ func TestConnectionFailureDoesNotCancelOtherHosts(t *testing.T) {
 		select {
 		case result := <-results:
 			got[result.conID] = result.code
+			if result.conID == 0 && result.kind != ResultConnectionFailed {
+				t.Errorf("bad host kind=%q, want %q", result.kind, ResultConnectionFailed)
+			}
 			_ = p.delReslt(result)
 		case <-time.After(time.Second):
 			t.Fatal("timed out waiting for all host results")

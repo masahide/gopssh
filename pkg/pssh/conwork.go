@@ -45,6 +45,7 @@ func (c *conWork) conWorker(ctx context.Context, config ssh.ClientConfig) {
 				return
 			}
 			res := c.newResult(c.id, cmd.id)
+			res.kind = ResultConnectionFailed
 			res.code = connectFailureCode
 			res.err = fmt.Errorf("cannot connect [%s]: %w", c.host, err)
 			select {
