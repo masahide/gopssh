@@ -6,6 +6,12 @@
 curl -fsSL https://raw.githubusercontent.com/masahide/gopssh/main/install.sh | sh
 ```
 
+To uninstall:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/masahide/gopssh/main/uninstall.sh | sh
+```
+
 ### Linux
 
 For RHEL/CentOS:

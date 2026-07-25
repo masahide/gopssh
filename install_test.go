@@ -85,6 +85,36 @@ esac
 	}
 }
 
+func TestUninstaller(t *testing.T) {
+	installDir := filepath.Join(t.TempDir(), "install")
+	if err := os.MkdirAll(installDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	binary := filepath.Join(installDir, "gopssh")
+	if err := os.WriteFile(binary, []byte("test binary"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	keep := filepath.Join(installDir, "keep")
+	if err := os.WriteFile(keep, []byte("keep"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	for i := 0; i < 2; i++ {
+		command := exec.Command("sh", "uninstall.sh")
+		command.Env = append(os.Environ(), "GOPSSH_INSTALL_DIR="+installDir)
+		output, err := command.CombinedOutput()
+		if err != nil {
+			t.Fatalf("uninstall.sh failed: %v\n%s", err, output)
+		}
+	}
+	if _, err := os.Stat(binary); !os.IsNotExist(err) {
+		t.Fatalf("gopssh still exists or could not be checked: %v", err)
+	}
+	if _, err := os.Stat(keep); err != nil {
+		t.Fatalf("uninstaller removed an unrelated file: %v", err)
+	}
+}
+
 func writeTestArchive(t *testing.T, path string) {
 	t.Helper()
 	file, err := os.Create(path)

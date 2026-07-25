@@ -67,6 +67,18 @@ curl -fsSL https://raw.githubusercontent.com/masahide/gopssh/main/install.sh |
 See the [releases page](https://github.com/masahide/gopssh/releases) for packages
 and release notes.
 
+To uninstall:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/masahide/gopssh/main/uninstall.sh | sh
+```
+
+If `GOPSSH_INSTALL_DIR` was used during installation, specify the same directory:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/masahide/gopssh/main/uninstall.sh |
+  GOPSSH_INSTALL_DIR="$HOME/bin" sh
+```
 
 ## build
 

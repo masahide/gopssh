@@ -46,7 +46,9 @@ jobs:
       - name: Test
         run: go test -race -covermode=atomic -coverprofile=coverage.txt ./...
       - name: Validate installer
-        run: sh -n install.sh
+        run: |
+          sh -n install.sh
+          sh -n uninstall.sh
       - name: Lint
         uses: golangci/golangci-lint-action@v9
         with:

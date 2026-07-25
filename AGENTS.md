@@ -3,7 +3,7 @@
 ## Project Structure & Module Organization
 - `cmd/gopssh/main.go` provides the CLI entrypoint, with supporting helpers under `cmd/gopssh/gopssh/`.
 - Core parallel SSH logic, worker pools, and agent wrappers live in `pkg/pssh/`, which also houses unit tests and fixtures in `pkg/pssh/test/`.
-- RPM and DEB packaging utilities are grouped under `pack/`; the curl-based installer is `install.sh`, and release metadata lives in `releasenote.template.md`.
+- RPM and DEB packaging utilities are grouped under `pack/`; the curl-based installer and uninstaller are `install.sh` and `uninstall.sh`, and release metadata lives in `releasenote.template.md`.
 - The top-level `Makefile` orchestrates builds, tests, linting, and coverage aggregation; keep changes aligned with its targets.
 
 ## Build, Test, and Development Commands
@@ -29,5 +29,5 @@
 
 ## Release & Packaging Notes
 - Build artifacts land in `.bin/`; confirm the binary version with `./gopssh -version` before running `pack/debpack` or `pack/rpmpack`.
-- Keep `install.sh` aligned with release archive names and the generated `checksums.txt` file.
+- Keep `install.sh` aligned with release archive names and the generated `checksums.txt` file, and keep `uninstall.sh` aligned with its installation directory behavior.
 - Update `releasenote.template.md` alongside packaging changes so CI-driven releases stay coherent.
