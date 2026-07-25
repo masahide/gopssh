@@ -15,17 +15,21 @@ import (
 )
 
 type mockSess struct {
-	err    error
-	res    *result
-	stdout []byte
-	stderr []byte
+	err     error
+	res     *result
+	stdout  []byte
+	stderr  []byte
+	started bool
 }
 
 func (s *mockSess) StderrPipe() (io.Reader, error) { return bytes.NewReader(s.stderr), nil }
 func (s *mockSess) StdoutPipe() (io.Reader, error) { return bytes.NewReader(s.stdout), nil }
-func (s *mockSess) Start(cmd string) error         { return nil }
-func (s *mockSess) Wait() error                    { return s.err }
-func (s *mockSess) Close() error                   { return nil }
+func (s *mockSess) Start(cmd string) error {
+	s.started = true
+	return nil
+}
+func (s *mockSess) Wait() error  { return s.err }
+func (s *mockSess) Close() error { return nil }
 
 func (s *mockSess) runner(ctx context.Context, res *result, session sess) {
 	s.res = res
@@ -377,5 +381,30 @@ func TestContextCancellationClosesRunningSession(t *testing.T) {
 	case <-done:
 	case <-time.After(time.Second):
 		t.Fatal("run did not return after context cancellation")
+	}
+}
+
+func TestCanceledContextDoesNotStartSession(t *testing.T) {
+	p := &Pssh{Config: &Config{
+		ColorMode:       false,
+		MaxBufferMemory: DefaultMaxBufferMemory,
+		MaxSpoolSize:    DefaultMaxSpoolSize,
+	}}
+	p.Init()
+	s := &sessionWork{
+		con: &conWork{Pssh: p},
+		input: &input{
+			results: make(chan *result, 1),
+		},
+	}
+	session := &mockSess{}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	s.run(ctx, s.newResult(), session)
+	if session.started {
+		t.Fatal("session started with canceled context")
+	}
+	if p.outputMemory.Used() != 0 || p.outputSpool.Used() != 0 {
+		t.Fatalf("output budgets not released: memory=%d spool=%d", p.outputMemory.Used(), p.outputSpool.Used())
 	}
 }

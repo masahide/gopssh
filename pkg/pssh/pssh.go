@@ -109,12 +109,48 @@ func (p writerPrinter) Printf(format string, a ...interface{}) (n int, err error
 }
 
 type sshDialIface interface {
-	Dial(network, addr string, config *ssh.ClientConfig) (sshClientIface, error)
+	DialContext(ctx context.Context, network, addr string, config *ssh.ClientConfig) (sshClientIface, error)
 }
-type sshDial struct{}
 
-func (n sshDial) Dial(network, addr string, config *ssh.ClientConfig) (sshClientIface, error) {
-	return ssh.Dial(network, addr, config)
+type contextDialer interface {
+	DialContext(ctx context.Context, network, addr string) (net.Conn, error)
+}
+
+type sshDial struct {
+	netDialer contextDialer
+}
+
+func (n sshDial) DialContext(
+	ctx context.Context,
+	network string,
+	addr string,
+	config *ssh.ClientConfig,
+) (sshClientIface, error) {
+	dialer := n.netDialer
+	if dialer == nil {
+		dialer = &net.Dialer{Timeout: config.Timeout}
+	}
+	netConn, err := dialer.DialContext(ctx, network, addr)
+	if err != nil {
+		return nil, err
+	}
+	stopCancel := context.AfterFunc(ctx, func() {
+		_ = netConn.Close()
+	})
+	clientConn, chans, reqs, err := ssh.NewClientConn(netConn, addr, config)
+	stopCancel()
+	if err != nil {
+		_ = netConn.Close()
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return nil, ctxErr
+		}
+		return nil, err
+	}
+	if err := ctx.Err(); err != nil {
+		_ = clientConn.Close()
+		return nil, err
+	}
+	return ssh.NewClient(clientConn, chans, reqs), nil
 }
 
 type sshClientIface interface {
@@ -432,16 +468,34 @@ func (p *Pssh) runConWorkers(ctx context.Context) int {
 }
 
 func (p *Pssh) launchConWorkers(ctx context.Context) int {
-	for i := range p.cws {
+	for i, cw := range p.cws {
+		if ctx.Err() != nil {
+			p.finishUnlaunchedWorkers(i)
+			return i
+		}
 		if p.Concurrency > 0 {
-			p.concurrentGoroutines <- struct{}{}
+			select {
+			case p.concurrentGoroutines <- struct{}{}:
+			case <-ctx.Done():
+				p.finishUnlaunchedWorkers(i)
+				return i
+			}
 		}
 		go func(cw *conWork) {
 			defer p.workerWG.Done()
+			if p.Concurrency > 0 {
+				defer func() { <-p.concurrentGoroutines }()
+			}
 			cw.conWorker(ctx, p.clientConf)
-		}(p.cws[i])
+		}(cw)
 	}
 	return len(p.cws)
+}
+
+func (p *Pssh) finishUnlaunchedWorkers(start int) {
+	for range p.cws[start:] {
+		p.workerWG.Done()
+	}
 }
 
 func (p *Pssh) printSortResults(ctx context.Context, results chan *result, cws []*conWork) int {

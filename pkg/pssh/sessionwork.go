@@ -68,7 +68,9 @@ func (s *sessionWork) run(ctx context.Context, res *result, session sess) {
 		{name: "", err: nil},                  // 2
 		{name: "I/O err:", err: nil},          // 3
 	}
-	if err = session.Start(s.command); err == nil {
+	if err = ctx.Err(); err != nil {
+		errs[3].err = err
+	} else if err = session.Start(s.command); err == nil {
 		errChs := []chan error{make(chan error, 1), make(chan error, 1)}
 		go readStream(res.stdout, stdout, errChs[0])
 		go readStream(res.stderr, stderr, errChs[1])

@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"net"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -24,6 +26,7 @@ func (c *conMock) SetWriteDeadline(t time.Time) error { return nil }
 func (c *conMock) SetReadDeadline(t time.Time) error  { return nil }
 
 type conSSHMock struct {
+	closeFunc func()
 }
 
 func (c *conSSHMock) SendRequest(name string, wantReply bool, payload []byte) (bool, []byte, error) {
@@ -32,7 +35,12 @@ func (c *conSSHMock) SendRequest(name string, wantReply bool, payload []byte) (b
 func (c *conSSHMock) OpenChannel(name string, data []byte) (ssh.Channel, <-chan *ssh.Request, error) {
 	return nil, nil, nil
 }
-func (c *conSSHMock) Close() error                                                  { return nil }
+func (c *conSSHMock) Close() error {
+	if c.closeFunc != nil {
+		c.closeFunc()
+	}
+	return nil
+}
 func (c *conSSHMock) Wait() error                                                   { return nil }
 func (c *conSSHMock) User() string                                                  { return "" }
 func (c *conSSHMock) SessionID() []byte                                             { return nil }
@@ -52,17 +60,68 @@ type mockSSHDial struct {
 	err error
 }
 
-func (n mockSSHDial) Dial(network, addr string, config *ssh.ClientConfig) (sshClientIface, error) {
+func (n mockSSHDial) DialContext(
+	context.Context,
+	string,
+	string,
+	*ssh.ClientConfig,
+) (sshClientIface, error) {
 	return &conSSHMock{}, n.err
 }
 
 type hostSSHDial struct{}
 
-func (hostSSHDial) Dial(network, addr string, config *ssh.ClientConfig) (sshClientIface, error) {
+func (hostSSHDial) DialContext(
+	_ context.Context,
+	_ string,
+	addr string,
+	_ *ssh.ClientConfig,
+) (sshClientIface, error) {
 	if addr == "bad:22" {
 		return nil, errors.New("connection refused")
 	}
 	return &conSSHMock{}, nil
+}
+
+type countingSSHDial struct {
+	mu          sync.Mutex
+	calls       []string
+	blockAddr   string
+	dialStarted chan struct{}
+	releaseDial chan struct{}
+	closed      atomic.Bool
+}
+
+type pipeDialer struct {
+	conn    net.Conn
+	started chan struct{}
+}
+
+func (d *pipeDialer) DialContext(context.Context, string, string) (net.Conn, error) {
+	close(d.started)
+	return d.conn, nil
+}
+
+func (d *countingSSHDial) DialContext(
+	_ context.Context,
+	_ string,
+	addr string,
+	_ *ssh.ClientConfig,
+) (sshClientIface, error) {
+	d.mu.Lock()
+	d.calls = append(d.calls, addr)
+	d.mu.Unlock()
+	if addr == d.blockAddr {
+		close(d.dialStarted)
+		<-d.releaseDial
+	}
+	return &conSSHMock{closeFunc: func() { d.closed.Store(true) }}, nil
+}
+
+func (d *countingSSHDial) count() int {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return len(d.calls)
 }
 
 func mockStartSessionWorker(ctx context.Context, conn sshClientIface, cmd input) {
@@ -148,5 +207,140 @@ func TestConnectionFailureDoesNotCancelOtherHosts(t *testing.T) {
 	}
 	if got[0] != connectFailureCode || got[1] != 0 {
 		t.Fatalf("result codes=%v, want map[0:%d 1:0]", got, connectFailureCode)
+	}
+}
+
+func TestCancellationDoesNotLaunchQueuedHosts(t *testing.T) {
+	const hostCount = 100
+	p := &Pssh{Config: &Config{
+		Concurrency:     1,
+		MaxAgentConns:   DefaultMaxAgentConns,
+		MaxBufferMemory: DefaultMaxBufferMemory,
+		MaxSpoolSize:    DefaultMaxSpoolSize,
+	}}
+	p.Init()
+	dialer := &countingSSHDial{}
+	p.sshDialer = dialer
+	p.cws = make([]*conWork, hostCount)
+	started := make(chan struct{})
+	for i := range p.cws {
+		p.cws[i] = p.newConWork(i, "host")
+		p.cws[i].startSession = func(ctx context.Context, _ sshClientIface, _ input) {
+			select {
+			case <-started:
+			default:
+				close(started)
+			}
+			<-ctx.Done()
+		}
+		p.cws[i].command <- input{}
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	launcherDone := make(chan struct{})
+	go func() {
+		p.runConWorkers(ctx)
+		close(launcherDone)
+	}()
+	<-started
+	cancel()
+
+	select {
+	case <-launcherDone:
+	case <-time.After(time.Second):
+		t.Fatal("worker launcher did not stop after cancellation")
+	}
+	p.workerWG.Wait()
+	if got := dialer.count(); got != 1 {
+		t.Fatalf("DialContext calls=%d, want 1", got)
+	}
+}
+
+func TestDialCompletingAfterCancellationDoesNotStartCommand(t *testing.T) {
+	p := &Pssh{Config: &Config{
+		Concurrency:     1,
+		MaxAgentConns:   DefaultMaxAgentConns,
+		MaxBufferMemory: DefaultMaxBufferMemory,
+		MaxSpoolSize:    DefaultMaxSpoolSize,
+	}}
+	p.Init()
+	dialer := &countingSSHDial{
+		blockAddr:   "host",
+		dialStarted: make(chan struct{}),
+		releaseDial: make(chan struct{}),
+	}
+	p.sshDialer = dialer
+	commandStarted := make(chan struct{}, 1)
+	c := p.newConWork(0, "host")
+	c.startSession = func(context.Context, sshClientIface, input) {
+		commandStarted <- struct{}{}
+	}
+	c.command <- input{}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		c.conWorker(ctx, ssh.ClientConfig{})
+		close(done)
+	}()
+	<-dialer.dialStarted
+	cancel()
+	close(dialer.releaseDial)
+
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("worker did not return after canceled DialContext completed")
+	}
+	select {
+	case <-commandStarted:
+		t.Fatal("command started after cancellation")
+	default:
+	}
+	if !dialer.closed.Load() {
+		t.Fatal("connection was not closed after cancellation")
+	}
+}
+
+func TestCanceledCommandLoopDoesNotStartSession(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	started := false
+	c := &conWork{
+		command: make(chan input, 1),
+		startSession: func(context.Context, sshClientIface, input) {
+			started = true
+		},
+	}
+	c.command <- input{}
+	c.commandLoop(ctx, &conSSHMock{}, false)
+	if started {
+		t.Fatal("session started with canceled context")
+	}
+}
+
+func TestSSHDialContextCancelsHandshake(t *testing.T) {
+	clientConn, serverConn := net.Pipe()
+	defer func() {
+		_ = serverConn.Close()
+	}()
+	dialer := &pipeDialer{conn: clientConn, started: make(chan struct{})}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() {
+		_, dialErr := (sshDial{netDialer: dialer}).DialContext(ctx, "tcp", "host:22", &ssh.ClientConfig{
+			HostKeyCallback: ssh.InsecureIgnoreHostKey(), //nolint:gosec
+		})
+		done <- dialErr
+	}()
+	<-dialer.started
+	cancel()
+	select {
+	case dialErr := <-done:
+		if !errors.Is(dialErr, context.Canceled) {
+			t.Fatalf("DialContext error=%v, want cancellation", dialErr)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("SSH handshake was not canceled")
 	}
 }
