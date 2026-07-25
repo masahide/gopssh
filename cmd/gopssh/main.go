@@ -1,14 +1,17 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"io"
 	"log"
 	"math"
 	"os"
+	"os/signal"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/masahide/gopssh/pkg/pssh"
@@ -220,5 +223,8 @@ func main() {
 		os.Exit(paramErrCode)
 	}
 	p.Init()
-	os.Exit(p.Run())
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	code := p.RunContext(ctx)
+	stop()
+	os.Exit(code)
 }

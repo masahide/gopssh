@@ -59,6 +59,7 @@ type resultOutput interface {
 	Finalize() error
 	Close() error
 	Err() error
+	Fatal() <-chan error
 	Size() int64
 }
 
@@ -79,6 +80,8 @@ type spillBuffer struct {
 	file           *os.File
 	size           int64
 	err            error
+	fatal          chan error
+	fatalOnce      sync.Once
 	finalized      bool
 }
 
@@ -91,6 +94,7 @@ func newSpillBuffer(
 		memoryBudget: memoryBudget,
 		spoolBudget:  spoolBudget,
 		createFile:   createFile,
+		fatal:        make(chan error, 1),
 	}
 }
 
@@ -252,6 +256,10 @@ func (b *spillBuffer) Err() error {
 	return b.err
 }
 
+func (b *spillBuffer) Fatal() <-chan error {
+	return b.fatal
+}
+
 func (b *spillBuffer) Size() int64 {
 	return b.size
 }
@@ -259,6 +267,9 @@ func (b *spillBuffer) Size() int64 {
 func (b *spillBuffer) setError(err error) {
 	if b.err == nil {
 		b.err = err
+		b.fatalOnce.Do(func() {
+			b.fatal <- err
+		})
 	}
 }
 

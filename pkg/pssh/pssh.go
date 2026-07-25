@@ -138,6 +138,7 @@ type Pssh struct {
 	outputSpoolOnce      sync.Once
 	outputSpoolDir       string
 	outputSpoolErr       error
+	workerWG             sync.WaitGroup
 	sshDialer            sshDialIface
 	cws                  []*conWork
 	clientConf           ssh.ClientConfig
@@ -357,6 +358,11 @@ func (p *Pssh) setConnPool() {
 
 // Run main task
 func (p *Pssh) Run() int {
+	return p.RunContext(context.Background())
+}
+
+// RunContext runs the main task until completion or context cancellation.
+func (p *Pssh) RunContext(parent context.Context) int {
 	if err := p.Validate(); err != nil {
 		log.Printf("invalid config: %s", err)
 		return one
@@ -387,14 +393,16 @@ func (p *Pssh) Run() int {
 		HostKeyCallback: hc,
 		Config:          ssh.Config{KeyExchanges: p.Kex, Ciphers: p.Ciphers, MACs: p.Macs},
 	}
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(parent)
 	defer cancel()
+	p.workerWG = sync.WaitGroup{}
 
 	p.cws = make([]*conWork, len(hosts))
 	for i, host := range hosts {
 		p.cws[i] = p.newConWork(i, host)
 	}
-	go p.runConWorkers(ctx)
+	p.workerWG.Add(len(p.cws))
+	go p.launchConWorkers(ctx)
 
 	stdin := []byte{}
 	if p.StdinFlag {
@@ -413,16 +421,25 @@ func (p *Pssh) Run() int {
 	}
 	code := p.outputFunc()(ctx, results, p.cws)
 	cancel()
+	p.workerWG.Wait()
 
 	return code
 }
 
 func (p *Pssh) runConWorkers(ctx context.Context) int {
+	p.workerWG.Add(len(p.cws))
+	return p.launchConWorkers(ctx)
+}
+
+func (p *Pssh) launchConWorkers(ctx context.Context) int {
 	for i := range p.cws {
 		if p.Concurrency > 0 {
 			p.concurrentGoroutines <- struct{}{}
 		}
-		go p.cws[i].conWorker(ctx, p.clientConf)
+		go func(cw *conWork) {
+			defer p.workerWG.Done()
+			cw.conWorker(ctx, p.clientConf)
+		}(p.cws[i])
 	}
 	return len(p.cws)
 }
@@ -528,31 +545,11 @@ type client interface {
 	NewSession() (*ssh.Session, error)
 }
 
-func getErr(ctx context.Context, errCh <-chan error) error {
-	var err error
-L1:
-	for {
-		select {
-		case e, ok := <-errCh:
-			if !ok {
-				break L1
-			}
-			err = e
-		case <-ctx.Done():
-			return err
-		}
-	}
-	return err
-}
-
-func readStream(ctx context.Context, out io.Writer, r io.Reader, errCh chan<- error) {
+func readStream(out io.Writer, r io.Reader, errCh chan<- error) {
 	buffer := copyBufferPool.Get().(*[]byte)
 	_, err := io.CopyBuffer(out, r, *buffer)
 	copyBufferPool.Put(buffer)
-	select {
-	case errCh <- err:
-	case <-ctx.Done():
-	}
+	errCh <- err
 	close(errCh)
 }
 

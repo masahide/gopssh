@@ -7,7 +7,9 @@ import (
 	"io"
 	"os"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"golang.org/x/crypto/ssh"
 )
@@ -21,7 +23,8 @@ type mockSess struct {
 
 func (s *mockSess) StderrPipe() (io.Reader, error) { return bytes.NewReader(s.stderr), nil }
 func (s *mockSess) StdoutPipe() (io.Reader, error) { return bytes.NewReader(s.stdout), nil }
-func (s *mockSess) Run(cmd string) error           { return s.err }
+func (s *mockSess) Start(cmd string) error         { return nil }
+func (s *mockSess) Wait() error                    { return s.err }
 func (s *mockSess) Close() error                   { return nil }
 
 func (s *mockSess) runner(ctx context.Context, res *result, session sess) {
@@ -30,6 +33,77 @@ func (s *mockSess) runner(ctx context.Context, res *result, session sess) {
 
 type mockClient struct {
 	err error
+}
+
+type endlessReader struct {
+	done <-chan struct{}
+}
+
+func (r *endlessReader) Read(data []byte) (int, error) {
+	select {
+	case <-r.done:
+		return 0, io.EOF
+	default:
+		for i := range data {
+			data[i] = 'x'
+		}
+		return len(data), nil
+	}
+}
+
+type blockingReader struct {
+	done <-chan struct{}
+}
+
+func (r *blockingReader) Read([]byte) (int, error) {
+	<-r.done
+	return 0, io.EOF
+}
+
+type blockingSess struct {
+	done       chan struct{}
+	started    chan struct{}
+	closed     chan struct{}
+	closeOnce  sync.Once
+	withOutput bool
+}
+
+func newBlockingSess(withOutput bool) *blockingSess {
+	return &blockingSess{
+		done:       make(chan struct{}),
+		started:    make(chan struct{}),
+		closed:     make(chan struct{}),
+		withOutput: withOutput,
+	}
+}
+
+func (s *blockingSess) StderrPipe() (io.Reader, error) {
+	return bytes.NewReader(nil), nil
+}
+
+func (s *blockingSess) StdoutPipe() (io.Reader, error) {
+	if s.withOutput {
+		return &endlessReader{done: s.done}, nil
+	}
+	return &blockingReader{done: s.done}, nil
+}
+
+func (s *blockingSess) Start(string) error {
+	close(s.started)
+	return nil
+}
+
+func (s *blockingSess) Wait() error {
+	<-s.done
+	return errors.New("session closed")
+}
+
+func (s *blockingSess) Close() error {
+	s.closeOnce.Do(func() {
+		close(s.done)
+		close(s.closed)
+	})
+	return nil
 }
 
 func (c *mockClient) NewSession() (*ssh.Session, error) {
@@ -228,4 +302,80 @@ func TestSpoolWriteFailureReturnsNonzero(t *testing.T) {
 		t.Fatalf("err=%v, want spool write error", got.err)
 	}
 	_ = p.delReslt(got)
+}
+
+func TestOutputFatalClosesRunningSession(t *testing.T) {
+	p := &Pssh{Config: &Config{
+		ColorMode:       false,
+		MaxBufferMemory: outputChunkSize,
+		MaxSpoolSize:    1,
+		SpoolDir:        t.TempDir(),
+	}}
+	p.Init()
+	t.Cleanup(func() {
+		_ = p.cleanupOutputStorage()
+	})
+	results := make(chan *result, 1)
+	s := &sessionWork{
+		con: &conWork{Pssh: p},
+		input: &input{
+			results: results,
+		},
+	}
+	session := newBlockingSess(true)
+	go s.run(context.Background(), s.newResult(), session)
+
+	select {
+	case <-session.closed:
+	case <-time.After(time.Second):
+		t.Fatal("session was not closed after output spool failure")
+	}
+	select {
+	case got := <-results:
+		if got.code != one {
+			t.Errorf("code=%d, want %d", got.code, one)
+		}
+		if got.err == nil || !strings.Contains(got.err.Error(), "maximum spool size") {
+			t.Fatalf("err=%v, want maximum spool size error", got.err)
+		}
+		_ = p.delReslt(got)
+	case <-time.After(time.Second):
+		t.Fatal("run did not return after output spool failure")
+	}
+}
+
+func TestContextCancellationClosesRunningSession(t *testing.T) {
+	p := &Pssh{Config: &Config{
+		ColorMode:       false,
+		MaxBufferMemory: DefaultMaxBufferMemory,
+		MaxSpoolSize:    DefaultMaxSpoolSize,
+	}}
+	p.Init()
+	results := make(chan *result, 1)
+	s := &sessionWork{
+		con: &conWork{Pssh: p},
+		input: &input{
+			results: results,
+		},
+	}
+	session := newBlockingSess(false)
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		s.run(ctx, s.newResult(), session)
+		close(done)
+	}()
+	<-session.started
+	cancel()
+
+	select {
+	case <-session.closed:
+	case <-time.After(time.Second):
+		t.Fatal("session was not closed after context cancellation")
+	}
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("run did not return after context cancellation")
+	}
 }

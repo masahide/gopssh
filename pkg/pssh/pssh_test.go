@@ -264,6 +264,7 @@ func TestRunConWorkers(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	i := p.runConWorkers(ctx)
+	p.workerWG.Wait()
 	if i != 1 {
 		t.Error("i!=1")
 	}
@@ -276,10 +277,11 @@ type mockPrin struct {
 
 type testResultOutput struct {
 	bytes.Buffer
+	fatal chan error
 }
 
 func newTestResultOutput(value string) *testResultOutput {
-	result := &testResultOutput{}
+	result := &testResultOutput{fatal: make(chan error)}
 	_, _ = result.WriteString(value)
 	return result
 }
@@ -291,7 +293,10 @@ func (o *testResultOutput) WriteTo(dst io.Writer) (int64, error) {
 func (o *testResultOutput) Finalize() error { return nil }
 func (o *testResultOutput) Close() error    { return nil }
 func (o *testResultOutput) Err() error      { return nil }
-func (o *testResultOutput) Size() int64     { return int64(o.Len()) }
+func (o *testResultOutput) Fatal() <-chan error {
+	return o.fatal
+}
+func (o *testResultOutput) Size() int64 { return int64(o.Len()) }
 
 func (p *mockPrin) Print(a ...interface{}) (n int, err error) {
 	fmt.Fprint(&p.buf, a...)
