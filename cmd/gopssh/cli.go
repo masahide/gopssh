@@ -102,17 +102,14 @@ func executeModern(ctx context.Context, args []string, stdin io.Reader, stdout, 
 		args = args[1:]
 	}
 	if len(args) == 0 {
-		if jsonMode {
-			return renderUsageError(stdout, stderr, true, newUsageError(
-				"missing_argument", "command is required", []string{"gopssh"}, "", nil, topUsage(),
-			))
-		}
-		if _, err := fmt.Fprint(stdout, topHelp()); err != nil {
-			return 1
-		}
-		return paramErrCode
+		return renderUsageError(stdout, stderr, jsonMode, newUsageError(
+			"missing_argument", "command is required", []string{"gopssh"}, "", nil, topUsage(),
+		))
 	}
 	if args[0] == "--help" {
+		if jsonMode {
+			return renderJSONHelpError(stdout, stderr, []string{"gopssh"}, topUsage())
+		}
 		if _, err := fmt.Fprint(stdout, topHelp()); err != nil {
 			return 1
 		}
@@ -183,11 +180,16 @@ func parseFlagError(err error, path []string, known []string, usage string) *usa
 	return newUsageError(code, message, path, token, suggestions, usage)
 }
 
+func renderJSONHelpError(stdout, stderr io.Writer, path []string, usage string) int {
+	return renderUsageError(stdout, stderr, true, newUsageError(
+		"invalid_argument", "--json cannot be combined with help", path, "--json", nil, usage,
+	))
+}
+
 func runHelp(args []string, stdout, stderr io.Writer, jsonMode bool) int {
+	jsonMode = jsonMode || requestedJSON(args)
 	if jsonMode {
-		return renderUsageError(stdout, stderr, true, newUsageError(
-			"invalid_argument", "--json is not supported for help", []string{"gopssh", "help"}, "", nil, "gopssh help [command [subcommand]]",
-		))
+		return renderJSONHelpError(stdout, stderr, []string{"gopssh"}, topUsage())
 	}
 	path := []string{"gopssh"}
 	for _, arg := range args {
@@ -260,14 +262,18 @@ func runFlagSet(options *runOptions) (*flag.FlagSet, []string) {
 }
 
 func runModern(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.Writer, globalJSON bool) int {
+	jsonMode := globalJSON || requestedJSON(args)
 	if hasHelp(args) {
+		if jsonMode {
+			return renderJSONHelpError(stdout, stderr, []string{"gopssh", "run"}, runUsage())
+		}
 		if _, err := fmt.Fprint(stdout, runHelpText()); err != nil {
 			return 1
 		}
 		return 0
 	}
 	options := defaultRunOptions()
-	options.json = globalJSON || requestedJSON(args)
+	options.json = jsonMode
 	fs, known := runFlagSet(&options)
 	if err := fs.Parse(args); err != nil {
 		return renderUsageError(stdout, stderr, globalJSON || options.json, parseFlagError(err, []string{"gopssh", "run"}, known, runUsage()))
@@ -989,6 +995,15 @@ func parseHostEntries(path string) ([]hostEntry, error) {
 
 func runHosts(args []string, stdout, stderr io.Writer, globalJSON bool) int {
 	globalJSON = globalJSON || requestedJSON(args)
+	if globalJSON && hasHelp(args) {
+		path := []string{"gopssh", "hosts"}
+		usage := hostsUsage()
+		if len(args) > 0 && (args[0] == "list" || args[0] == "validate") {
+			path = append(path, args[0])
+			usage = strings.Join(path, " ") + " --file <path>"
+		}
+		return renderJSONHelpError(stdout, stderr, path, usage)
+	}
 	if len(args) == 0 {
 		return renderUsageError(stdout, stderr, globalJSON, newUsageError(
 			"missing_argument", "hosts subcommand is required", []string{"gopssh", "hosts"}, "", nil, hostsUsage(),
@@ -1105,14 +1120,17 @@ type doctorCheck struct {
 }
 
 func runDoctor(ctx context.Context, args []string, stdout, stderr io.Writer, globalJSON bool) int {
+	jsonMode := globalJSON || requestedJSON(args)
 	if hasHelp(args) {
+		if jsonMode {
+			return renderJSONHelpError(stdout, stderr, []string{"gopssh", "doctor"}, "gopssh doctor [options]")
+		}
 		if _, err := fmt.Fprint(stdout, doctorHelpText()); err != nil {
 			return 1
 		}
 		return 0
 	}
 	options := defaultRunOptions()
-	jsonMode := globalJSON || requestedJSON(args)
 	connect := false
 	limit := 10
 	fs := flag.NewFlagSet("gopssh doctor", flag.ContinueOnError)
@@ -1318,6 +1336,15 @@ func probeAgentSocket(socket string) error {
 
 func runConfig(args []string, stdout, stderr io.Writer, globalJSON bool) int {
 	globalJSON = globalJSON || requestedJSON(args)
+	if globalJSON && hasHelp(args) {
+		path := []string{"gopssh", "config"}
+		usage := configUsage()
+		if len(args) > 0 && args[0] == "show" {
+			path = append(path, "show")
+			usage = "gopssh config show [--json]"
+		}
+		return renderJSONHelpError(stdout, stderr, path, usage)
+	}
 	if len(args) == 0 {
 		return renderUsageError(stdout, stderr, globalJSON, newUsageError(
 			"missing_argument", "config subcommand is required", []string{"gopssh", "config"}, "", nil, configUsage(),
@@ -1385,13 +1412,16 @@ func runConfig(args []string, stdout, stderr io.Writer, globalJSON bool) int {
 }
 
 func runVersion(args []string, stdout, stderr io.Writer, globalJSON bool) int {
+	jsonMode := globalJSON || requestedJSON(args)
 	if hasHelp(args) {
+		if jsonMode {
+			return renderJSONHelpError(stdout, stderr, []string{"gopssh", "version"}, "gopssh version [--json]")
+		}
 		if _, err := fmt.Fprint(stdout, versionHelpText()); err != nil {
 			return 1
 		}
 		return 0
 	}
-	jsonMode := globalJSON || requestedJSON(args)
 	fs := flag.NewFlagSet("gopssh version", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	fs.BoolVar(&jsonMode, "json", jsonMode, "JSON output")
@@ -1417,7 +1447,11 @@ func runVersion(args []string, stdout, stderr io.Writer, globalJSON bool) int {
 }
 
 func runCompletion(args []string, stdout, stderr io.Writer, jsonMode bool) int {
+	jsonMode = jsonMode || requestedJSON(args)
 	if hasHelp(args) {
+		if jsonMode {
+			return renderJSONHelpError(stdout, stderr, []string{"gopssh", "completion"}, "gopssh completion <bash|zsh|fish|powershell>")
+		}
 		if _, err := fmt.Fprint(stdout, completionHelpText()); err != nil {
 			return 1
 		}

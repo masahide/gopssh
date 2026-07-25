@@ -47,34 +47,40 @@ func TestModernDispatch(t *testing.T) {
 }
 
 func TestTopHelpDiscoversCommands(t *testing.T) {
-	for _, test := range []struct {
-		args     []string
-		wantCode int
-	}{
-		{args: nil, wantCode: paramErrCode},
-		{args: []string{"--help"}, wantCode: 0},
+	code, stdout, stderr := executeForTest(t, "--help")
+	if code != 0 || stderr != "" {
+		t.Fatalf("code=%d stderr=%q", code, stderr)
+	}
+	for _, command := range []string{"run", "doctor", "hosts", "config", "version", "completion", "help"} {
+		if !strings.Contains(stdout, command) {
+			t.Errorf("help missing %q", command)
+		}
+	}
+	for _, legacyHelp := range []string{
+		"Legacy syntax remains supported; in legacy mode -h means hosts file:",
+		"gopssh -h hosts.txt -u root -p 10 -d uptime",
+		"Run 'gopssh help legacy' for full legacy help.",
 	} {
-		code, stdout, stderr := executeForTest(t, test.args...)
-		if code != test.wantCode || stderr != "" {
-			t.Fatalf("args=%v code=%d want=%d stderr=%q", test.args, code, test.wantCode, stderr)
+		if !strings.Contains(stdout, legacyHelp) {
+			t.Errorf("help missing %q", legacyHelp)
 		}
-		for _, command := range []string{"run", "doctor", "hosts", "config", "version", "completion", "help"} {
-			if !strings.Contains(stdout, command) {
-				t.Errorf("args=%v help missing %q", test.args, command)
-			}
-		}
-		for _, legacyHelp := range []string{
-			"Legacy syntax remains supported; in legacy mode -h means hosts file:",
-			"gopssh -h hosts.txt -u root -p 10 -d uptime",
-			"Run 'gopssh help legacy' for full legacy help.",
-		} {
-			if !strings.Contains(stdout, legacyHelp) {
-				t.Errorf("args=%v help missing %q", test.args, legacyHelp)
-			}
-		}
-		if strings.Contains(stdout, "Help topics:") {
-			t.Errorf("top help uses ambiguous help topic list: %q", stdout)
-		}
+	}
+	if strings.Contains(stdout, "Help topics:") {
+		t.Errorf("top help uses ambiguous help topic list: %q", stdout)
+	}
+}
+
+func TestNoArgumentsRenderTopLevelUsageError(t *testing.T) {
+	code, stdout, stderr := executeForTest(t)
+	if code != paramErrCode {
+		t.Fatalf("code=%d", code)
+	}
+	if stdout != "" {
+		t.Fatalf("stdout=%q, want empty", stdout)
+	}
+	if !strings.Contains(stderr, "Error: command is required") ||
+		!strings.Contains(stderr, topHelp()) {
+		t.Fatalf("stderr=%q", stderr)
 	}
 }
 
@@ -101,6 +107,40 @@ func TestTopLevelJSONCommandErrors(t *testing.T) {
 		}
 		if len(args) > 1 && envelope.Error.Code != "unknown_command" {
 			t.Errorf("args=%v error code=%q", args, envelope.Error.Code)
+		}
+	}
+}
+
+func TestJSONAndHelpReturnMachineReadableError(t *testing.T) {
+	tests := []struct {
+		args     []string
+		helpText string
+	}{
+		{args: []string{"--json", "--help"}, helpText: topHelp()},
+		{args: []string{"--json", "help"}, helpText: topHelp()},
+		{args: []string{"help", "--json"}, helpText: topHelp()},
+		{args: []string{"--json", "run", "--help"}, helpText: runHelpText()},
+		{args: []string{"run", "--json", "--help"}, helpText: runHelpText()},
+		{args: []string{"--json", "doctor", "--help"}, helpText: doctorHelpText()},
+		{args: []string{"--json", "hosts", "--help"}, helpText: hostsHelpText()},
+		{args: []string{"--json", "hosts", "list", "--help"}, helpText: hostsListHelpText()},
+		{args: []string{"--json", "config", "--help"}, helpText: configHelpText()},
+		{args: []string{"--json", "config", "show", "--help"}, helpText: configShowHelpText()},
+		{args: []string{"--json", "version", "--help"}, helpText: versionHelpText()},
+		{args: []string{"--json", "completion", "--help"}, helpText: completionHelpText()},
+	}
+	for _, test := range tests {
+		code, stdout, stderr := executeForTest(t, test.args...)
+		if code != paramErrCode {
+			t.Errorf("args=%v code=%d", test.args, code)
+		}
+		var envelope usageEnvelope
+		if err := json.Unmarshal([]byte(stdout), &envelope); err != nil {
+			t.Fatalf("args=%v invalid JSON %q: %v", test.args, stdout, err)
+		}
+		if envelope.Error.Code != "invalid_argument" ||
+			!strings.Contains(stderr, test.helpText) {
+			t.Errorf("args=%v error=%+v stderr=%q", test.args, envelope.Error, stderr)
 		}
 	}
 }

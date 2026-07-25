@@ -121,8 +121,9 @@ while `gopssh version` uses the new one-line format.
 ## JSON / NDJSON
 
 The schema major version is `1`. With `--json`, stdout contains only JSON;
-diagnostics and contextual help are written separately to stderr. Color is
-always disabled.
+diagnostics and contextual help are written separately to stderr. Combining
+`--json` with explicit help returns a JSON `invalid_argument` error instead of
+plain-text help on stdout. Color is always disabled.
 
 `run --json` emits NDJSON with one `result` line per host and one final
 `summary` line.
@@ -210,9 +211,9 @@ In the legacy syntax, `-h` specifies the hosts file rather than help. Flag
 parsing stops at the first non-flag argument, and the remaining arguments are
 joined with spaces. Non-TTY stdin is also forwarded automatically.
 
-Running `gopssh` without arguments displays the new top-level help and returns
-the legacy-compatible exit code 2. Run `gopssh help legacy` to see all legacy
-options.
+Running `gopssh` without arguments reports `Error: command is required` and
+the new top-level help to stderr, then returns the legacy-compatible exit code
+2. Run `gopssh help legacy` to see all legacy options.
 
 ```bash
 # Legacy syntax
