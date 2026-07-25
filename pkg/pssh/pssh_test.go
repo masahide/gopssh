@@ -13,6 +13,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/fatih/color"
 	"github.com/pkg/errors"
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/crypto/ssh/agent"
@@ -216,6 +217,56 @@ func TestPrintResultSeparatesStdoutAndStderr(t *testing.T) {
 				if !strings.Contains(stderr.String(), want) {
 					t.Errorf("stderr=%q, missing %q", stderr.String(), want)
 				}
+			}
+		})
+	}
+}
+
+func TestColorPrinterDoesNotColorNonTerminalWriter(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		writer func(*testing.T) (io.Writer, func() string)
+	}{
+		{
+			name: "buffer",
+			writer: func(_ *testing.T) (io.Writer, func() string) {
+				var buf bytes.Buffer
+				return &buf, buf.String
+			},
+		},
+		{
+			name: "file",
+			writer: func(t *testing.T) (io.Writer, func() string) {
+				file, err := os.CreateTemp(t.TempDir(), "output-*")
+				if err != nil {
+					t.Fatal(err)
+				}
+				t.Cleanup(func() {
+					if err := file.Close(); err != nil {
+						t.Error(err)
+					}
+				})
+				return file, func() string {
+					if err := file.Sync(); err != nil {
+						t.Fatal(err)
+					}
+					data, err := os.ReadFile(file.Name())
+					if err != nil {
+						t.Fatal(err)
+					}
+					return string(data)
+				}
+			},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			writer, output := test.writer(t)
+			printer := newColorPrinter(color.New(color.FgRed), writer)
+			if _, err := printer.Print("error output"); err != nil {
+				t.Fatal(err)
+			}
+			if got := output(); got != "error output" {
+				t.Errorf("output=%q, want uncolored output", got)
 			}
 		})
 	}

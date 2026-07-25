@@ -17,6 +17,8 @@ import (
 	"time"
 
 	"github.com/fatih/color"
+	"github.com/mattn/go-colorable"
+	"github.com/mattn/go-isatty"
 	pkgerrors "github.com/pkg/errors"
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/crypto/ssh/knownhosts"
@@ -76,9 +78,9 @@ func newPrint(stdout, stderr io.Writer, colorMode bool) *print {
 
 func (p *print) init() {
 	if p.colorMode {
-		p.red = colorPrinter{color: color.New(color.FgRed), writer: p.stderr}
-		p.boldRed = colorPrinter{color: color.New(color.FgRed).Add(color.Bold), writer: p.stderr}
-		p.green = colorPrinter{color: color.New(color.FgGreen), writer: p.stdout}
+		p.red = newColorPrinter(color.New(color.FgRed), p.stderr)
+		p.boldRed = newColorPrinter(color.New(color.FgRed).Add(color.Bold), p.stderr)
+		p.green = newColorPrinter(color.New(color.FgGreen), p.stdout)
 		return
 	}
 	p.red = writerPrinter{p.stderr}
@@ -100,6 +102,26 @@ type writerPrinter struct {
 type colorPrinter struct {
 	color  *color.Color
 	writer io.Writer
+}
+
+func newColorPrinter(c *color.Color, writer io.Writer) colorPrinter {
+	file, ok := writer.(*os.File)
+	if !ok || file == nil {
+		c.DisableColor()
+		return colorPrinter{color: c, writer: writer}
+	}
+
+	isTerminal := isatty.IsTerminal(file.Fd()) || isatty.IsCygwinTerminal(file.Fd())
+	if isTerminal && os.Getenv("NO_COLOR") == "" && os.Getenv("TERM") != "dumb" {
+		c.EnableColor()
+	} else {
+		c.DisableColor()
+	}
+
+	return colorPrinter{
+		color:  c,
+		writer: colorable.NewColorable(file),
+	}
 }
 
 func (p colorPrinter) Print(a ...interface{}) (n int, err error) {
